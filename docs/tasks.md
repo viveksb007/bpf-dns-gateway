@@ -66,7 +66,7 @@ Subscribe to `RTNLGRP_LINK` via netlink socket, filter for `RTM_NEWLINK`/`RTM_DE
 - **Blocked by**: #1
 - **Files**: `internal/netlinkmon/monitor.go`, `internal/netlinkmon/monitor_test.go`
 
-### 11. Controller orchestration
+### 11. ✅ Controller orchestration
 Ties together netlink monitor, eBPF loader, attach/detach, map management. On new veth → attach ingress + egress. On veth removal → cleanup tracking. Tracks attached interfaces in `map[int]AttachmentInfo` (ifindex → links). **Startup ordering**: subscribe netlink first, then enumerate existing veths via `netlink.LinkList()`, dedup against the ifindex set so a veth created between subscribe and enumerate is not double-attached or missed. Exposes methods for shutdown (detach all) and bypass toggle.
 
 - **Blocked by**: #7, #9, #10
