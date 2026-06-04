@@ -46,7 +46,7 @@ Implement `AttachToInterface` using TCX only (`link.AttachTCX` on kernel 6.6+), 
 - **Blocked by**: #6
 - **Files**: `internal/ebpf/attach.go`, `internal/ebpf/attach_test.go`
 
-### 8. ✅ Integration test: eBPF DNAT/SNAT on veth pair
+### 8. ✅ Integration test: eBPF DNAT/SNAT (BPF_PROG_TEST_RUN)
 Set up a network namespace + veth pair, attach eBPF programs, populate suffix rules and config maps, send a raw DNS UDP query from the namespace for a matching domain, verify DNAT occurred (dst rewritten to host resolver). Send a crafted response from host resolver IP, verify SNAT (src rewritten to CoreDNS IP). Also test passthrough for non-matching domains. **This validates the full eBPF datapath before building the controller.**
 
 - **Blocked by**: #7
