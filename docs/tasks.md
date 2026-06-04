@@ -54,7 +54,7 @@ Set up a network namespace + veth pair, attach eBPF programs, populate suffix ru
 
 ## Phase 2: Controller + Netlink
 
-### 9. Config file parsing + unit tests
+### 9. ✅ Config file parsing + unit tests
 Parse YAML config file with fields: `corednsServiceIP` (required), `hostResolverIP` (**required** — no auto-detect; systemd-resolved nodes expose `127.0.0.53` which is a loopback stub and must not be used), `rules` (pattern + action), `metricsAddr`, `healthCheck` (interval, timeout, failureThreshold), `logLevel`. Validation: valid IPs (reject loopback for `hostResolverIP`), valid patterns (must use `*.suffix` form — reject exact patterns and interior wildcards), port ranges.
 
 - **Blocked by**: #1
