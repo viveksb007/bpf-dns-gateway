@@ -40,7 +40,7 @@ Implement loader: bpf2go `go:generate` directive, `LoadPrograms()` to load compi
 - **Blocked by**: #3, #4, #5
 - **Files**: `internal/ebpf/loader.go`, `internal/ebpf/maps.go`, `internal/ebpf/maps_test.go`
 
-### 7. TCX attach/detach
+### 7. ✅ TCX attach/detach
 Implement `AttachToInterface` using TCX only (`link.AttachTCX` on kernel 6.6+), `DetachFromInterface`. Track attached interfaces (ifindex → links). On controller crash TCX auto-detaches when fds close — no orphan cleanup needed. Unit tests with dummy veth pairs. (Classic TC fallback and VPC CNI coexistence are post-MVP — see `docs/vpc-cni-coexistence.md`.)
 
 - **Blocked by**: #6
