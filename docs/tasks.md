@@ -60,7 +60,7 @@ Parse YAML config file with fields: `corednsServiceIP` (required), `hostResolver
 - **Blocked by**: #1
 - **Files**: `internal/config/config.go`, `internal/config/config_test.go`
 
-### 10. Netlink veth monitor
+### 10. ✅ Netlink veth monitor
 Subscribe to `RTNLGRP_LINK` via netlink socket, filter for `RTM_NEWLINK`/`RTM_DELLINK` events, identify veth interfaces (check `IFLA_INFO_KIND == "veth"`), expose a channel or callback interface for new/removed veths. On startup, enumerate all existing veths via `netlink.LinkList()`. Unit tests with real veth creation in a test namespace.
 
 - **Blocked by**: #1
