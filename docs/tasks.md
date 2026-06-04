@@ -16,13 +16,13 @@ Write `bpf/dns_gateway.h` with all struct/map definitions: `suffix_rules` (HASH)
 - **Blocked by**: #1
 - **Files**: `bpf/dns_gateway.h`
 
-### 3. eBPF ingress program (DNS parse + suffix match + DNAT)
+### 3. ✅ eBPF ingress program (DNS parse + suffix match + DNAT)
 Write `dns_gateway_ingress` in `bpf/dns_gateway.c`: ETH/IP/UDP parsing via `bpf_skb_load_bytes`, DNS header validation (QR=0, **QDCOUNT==1** — multi-question or zero-question packets pass through with `parse_error` metric), extract `txid` from DNS hdr, QNAME extraction into scratch buffer, label walking (bounded loop max 20), lowercase normalization, suffix matching via hash map lookups at each label boundary, conntrack creation with key `{pod_ip, pod_port, txid}` and value `{coredns_ip, timestamp_ns=ktime_get_ns()}`, DNAT with L3/L4 checksum fixup (`BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0`). All error paths return `TC_ACT_OK`.
 
 - **Blocked by**: #2
 - **Files**: `bpf/dns_gateway.c`
 
-### 4. eBPF egress program (conntrack SNAT)
+### 4. ✅ eBPF egress program (conntrack SNAT)
 Write `dns_gateway_egress` in `bpf/dns_gateway.c`: match `src=host_resolver_ip` and `sport=53`, extract `txid` from DNS hdr, conntrack lookup by `{daddr, dport, txid}`, **TTL check**: if `ktime_get_ns() - timestamp_ns > CONNTRACK_TTL_NS` → delete entry + passthrough; else SNAT src back to CoreDNS IP, checksum fixup, delete conntrack entry. **Egress does NOT check `cfg->bypass`** — in-flight DNAT'd queries must drain. All error paths return `TC_ACT_OK`.
 
 - **Blocked by**: #2

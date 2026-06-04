@@ -445,6 +445,10 @@ logLevel: info
 | EDNS0 OPT records | Not affected — in ADDITIONAL section, not parsed. DNS payload passes through unmodified. |
 | QDCOUNT = 0 | Passthrough |
 | QDCOUNT > 1 | Passthrough (intent ambiguous — first-Q match could misroute later cluster-local Qs). Increments `parse_error` metric. |
+| IP-fragmented query | Ingress passthrough — UDP+DNS headers may be split across fragments. Original query still reaches CoreDNS; correct. |
+| IP-fragmented response from VPC DNS | **Known limitation**: egress passes fragments through unchanged, so the pod sees `src=host_resolver_ip` on the reassembled response. AWS service DNS responses (S3/ECR/STS) are far below MTU in practice and never fragment. DNSSEC-enabled or EDNS0-bloated responses could trigger this. Mitigated client-side by retry-over-TCP (which bypasses our eBPF). Post-MVP fix: track IP-ID conntrack or set DF bit on DNAT'd queries to force TC-bit truncation. |
+| BPF helper failure (`bpf_map_update_elem`) | Ingress checks return; on failure passes through (no orphan DNAT). |
+| BPF helper failure (`bpf_skb_store_bytes`, `bpf_l3_csum_replace`, `bpf_l4_csum_replace`) | Return values not checked. These helpers do not allocate and only fail on pathological offsets; in practice they always succeed when their static offsets are valid. **Known correctness gap** — on theoretical failure, packet may be partially rewritten and conntrack state may diverge from packet state. Acceptable for MVP; add checks if any failure observed via verifier or production telemetry. |
 | Malformed packets | All parse failures → TC_ACT_OK (never drop) |
 | TCP DNS | Not matched (`protocol != UDP`) → goes to CoreDNS directly |
 | DNS-over-HTTPS / DNS-over-TLS | Different ports (443, 853) — not intercepted |
