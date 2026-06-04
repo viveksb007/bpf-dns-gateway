@@ -49,8 +49,27 @@ For each task in `docs/tasks.md`, follow this loop:
 3. **Get review from Codex.** Run `codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "<review prompt>"`. Pass the diff and the test results. Ask for severity-ranked findings.
 4. **Address Codex findings.** Apply fixes. If you and Codex disagree on a finding, **stop and loop the user in** with both sides of the argument before applying or dismissing.
 5. **Mark task complete in `docs/tasks.md`** (✅ next to the task heading) only after Codex review passes with no outstanding BLOCKER/MAJOR.
+6. **Commit after each task.** One commit per task (or per paired task batch) so review history aligns with task boundaries. Commit message format: `task #N: <subject>` followed by body summarizing what changed and key Codex findings.
 
-Do NOT batch tasks. One task → test → review → fix → next task.
+Do NOT batch tasks. One task → test → review → fix → commit → next task.
+
+## Codex Review Workflow
+
+Use the `/codex:review` plugin (not raw `codex exec`):
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review --background
+```
+
+Then `/codex:result <job-id>` for full output. Background mode is reliable; foreground often hangs on this host.
+
+For challenge / design-question reviews use `adversarial-review` with explicit focus text:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" adversarial-review --background "<focus>"
+```
+
+Codex review uses git diff (working tree vs HEAD), so commit only **after** review passes. Iterate uncommitted with re-reviews until clean.
 
 ## Key Conventions
 
