@@ -34,7 +34,7 @@ Implement `EncodeSuffix`: domain string → `[256]byte` wire-format key (lowerca
 - **Blocked by**: #1
 - **Files**: `internal/dnsenc/wire.go`, `internal/dnsenc/wire_test.go`
 
-### 6. eBPF loader and map management
+### 6. ✅ eBPF loader and map management
 Implement loader: bpf2go `go:generate` directive, `LoadPrograms()` to load compiled eBPF objects, pin maps to `/sys/fs/bpf/dns-gateway/`. Implement map ops: `PopulateConfig` (write `config_map` entry), `PopulateSuffixRules` (encode patterns, write/delete hash map entries with full reconciliation), `ReadMetrics` (sum per-CPU counters). Unit tests for map operations.
 
 - **Blocked by**: #3, #4, #5

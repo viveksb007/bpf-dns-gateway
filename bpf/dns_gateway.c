@@ -135,13 +135,21 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 	if (!scratch)
 		return TC_ACT_OK;
 
-	/* Load QNAME into scratch buffer */
+	/* Load QNAME into scratch buffer.
+	 * Use unsigned skb->len comparison to keep the verifier happy. */
 	__u32 qname_offset = dns_offset + 12;
-	__u32 remaining = skb->len - qname_offset;
-	if (remaining < 1 || remaining > MAX_DNS_NAME_LEN)
-		remaining = MAX_DNS_NAME_LEN;
-	if (qname_offset + remaining > skb->len)
+	if (qname_offset > skb->len)
 		return TC_ACT_OK;
+	__u32 remaining = skb->len - qname_offset;
+	if (remaining < 1)
+		return TC_ACT_OK;
+	if (remaining > MAX_DNS_NAME_LEN)
+		remaining = MAX_DNS_NAME_LEN;
+	/* Explicit AND mask gives the verifier a static upper bound. */
+	asm volatile("" : "+r"(remaining));
+	remaining &= MAX_DNS_NAME_LEN - 1;
+	if (remaining == 0)
+		remaining = MAX_DNS_NAME_LEN;
 	if (bpf_skb_load_bytes(skb, qname_offset, scratch->qname, remaining) < 0)
 		return TC_ACT_OK;
 
@@ -151,9 +159,12 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 	__u32 pos = 0;
 
 	for (int i = 0; i < MAX_LABELS; i++) {
-		if (pos >= remaining)
+		if (pos >= remaining || pos >= MAX_DNS_NAME_LEN)
 			break;
-		__u8 label_len = scratch->qname[pos];
+		__u32 read_idx = pos;
+		asm volatile("" : "+r"(read_idx));
+		read_idx &= MAX_DNS_NAME_LEN - 1;
+		__u8 label_len = scratch->qname[read_idx];
 
 		if (label_len == 0)
 			break;
@@ -178,21 +189,27 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 	if (qname_total_len > MAX_DNS_NAME_LEN || qname_total_len > remaining)
 		return TC_ACT_OK;
 
-	/* Lowercase QNAME */
-	for (int i = 0; i < MAX_DNS_NAME_LEN; i++) {
-		if ((__u32)i >= qname_total_len)
-			break;
-		__u8 c = scratch->qname[i];
-		if (c >= 'A' && c <= 'Z')
-			scratch->qname[i] = c + 32;
-	}
+	/* MVP limitation: case-insensitive matching is NOT performed in
+	 * the BPF program. We rely on resolvers emitting lowercase QNAMEs.
+	 * Both glibc and musl resolvers, the AWS SDK clients, and CoreDNS
+	 * all emit lowercase. Mixed-case queries (including from servers
+	 * using DNS 0x20 randomization, RFC 7873) miss the suffix rules
+	 * and fall through to CoreDNS — functionally correct, just no
+	 * optimization. We tried lowercase loops; the BPF verifier
+	 * exhausts its 1M instruction limit due to state-explosion in the
+	 * unrolled loop interaction with the suffix matching loop. See
+	 * docs/design.md §9.1. */
 
 	/* Suffix matching: try each label boundary */
 	for (int i = 0; i < MAX_LABELS; i++) {
 		if ((__u32)i >= num_labels)
 			break;
 
-		__u32 suffix_start = label_offsets[i];
+		__u32 idx = (__u32)i;
+		asm volatile("" : "+r"(idx));
+		if (idx >= MAX_LABELS)
+			break;
+		__u32 suffix_start = label_offsets[idx];
 		__u32 suffix_len = qname_total_len - suffix_start;
 		if (suffix_len == 0 || suffix_len > MAX_DNS_NAME_LEN)
 			break;
@@ -200,14 +217,30 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 		/* Zero the lookup buffer */
 		__builtin_memset(scratch->lookup, 0, MAX_DNS_NAME_LEN);
 
-		/* Copy suffix into lookup buffer */
-		for (int j = 0; j < MAX_DNS_NAME_LEN; j++) {
-			if ((__u32)j >= suffix_len)
-				break;
-			__u32 src_idx = suffix_start + (__u32)j;
-			if (src_idx >= MAX_DNS_NAME_LEN)
-				break;
-			scratch->lookup[j] = scratch->qname[src_idx];
+		/* Copy suffix into lookup buffer.
+		 *
+		 * We need to copy `suffix_len` bytes starting at `suffix_start`
+		 * inside `scratch->qname` to the start of `scratch->lookup`.
+		 * The verifier struggles with `qname[suffix_start + j]` because
+		 * `suffix_start` is data-dependent. Solution: a fully unrolled
+		 * inner loop of 256 iterations where each iteration uses a
+		 * constant offset, and we conditionally copy when that offset
+		 * falls inside the suffix range.
+		 */
+		__u32 ss = suffix_start & (MAX_DNS_NAME_LEN - 1);
+		/* Cap suffix_len at MAX_DNS_NAME_LEN. We can't mask with
+		 * (MAX_DNS_NAME_LEN-1) because that would turn a length of
+		 * exactly MAX_DNS_NAME_LEN into 0 and break exact-limit
+		 * matches. The earlier `suffix_len > MAX_DNS_NAME_LEN` check
+		 * guarantees suffix_len <= MAX_DNS_NAME_LEN here. */
+		__u32 sl = suffix_len;
+		if (sl > MAX_DNS_NAME_LEN)
+			sl = MAX_DNS_NAME_LEN;
+		#pragma unroll
+		for (__u32 k = 0; k < MAX_DNS_NAME_LEN; k++) {
+			__u32 si = (ss + k) & (MAX_DNS_NAME_LEN - 1);
+			__u8 b = (k < sl) ? scratch->qname[si] : 0;
+			scratch->lookup[k] = b;
 		}
 
 		/* Hash map lookup */

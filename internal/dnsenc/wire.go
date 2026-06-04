@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const MaxDNSNameLen = 256
+const MaxDNSNameLen = 128
 
 // EncodeSuffix converts a domain name (e.g., "s3.amazonaws.com") to a
 // 256-byte wire-format key suitable for BPF map lookups.

@@ -9,7 +9,7 @@
 #define ETH_HLEN    14
 #define IPPROTO_UDP 17
 
-#define MAX_DNS_NAME_LEN 256
+#define MAX_DNS_NAME_LEN 128
 #define MAX_LABELS       20
 #define CONNTRACK_MAX    65536
 

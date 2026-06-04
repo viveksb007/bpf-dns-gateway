@@ -38,13 +38,13 @@ type DnsGatewayGatewayConfig struct {
 
 type DnsGatewayScratchBuf struct {
 	_      structs.HostLayout
-	Qname  [256]uint8
-	Lookup [256]uint8
+	Qname  [128]uint8
+	Lookup [128]uint8
 }
 
 type DnsGatewaySuffixKey struct {
 	_    structs.HostLayout
-	Name [256]uint8
+	Name [128]uint8
 }
 
 type DnsGatewaySuffixValue struct {

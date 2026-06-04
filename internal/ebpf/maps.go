@@ -1,0 +1,217 @@
+package ebpf
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+
+	"github.com/cilium/ebpf"
+
+	"github.com/viveksb007/bpf-dns-gateway/internal/dnsenc"
+)
+
+// actionHostResolve mirrors ACTION_HOST_RESOLVE in bpf/dns_gateway.h.
+const actionHostResolve uint32 = 1
+
+// The eBPF C compares config_map fields against packet fields like
+// iph.daddr and udp.dest, which the kernel exposes in network byte order
+// without conversion. Cilium ebpf serializes Go struct fields to the map
+// in host byte order, so we must assign each uint16/uint32 field the
+// host integer whose in-memory bytes already match the wire bytes. This
+// is what binary.NativeEndian does when given the wire bytes directly.
+
+// dnsPort53 is 0x0035 in network bytes; encode as the host uint16 whose
+// memory representation matches that pattern.
+var dnsPort53 = nativeUint16([]byte{0x00, 0x35})
+
+// Config carries the values written to the single-entry config_map.
+//
+// CorednsIP and HostResolverIP must be IPv4. Bypass=true sets the bypass
+// flag; the eBPF programs check it on every packet.
+type Config struct {
+	CorednsIP      net.IP
+	HostResolverIP net.IP
+	Bypass         bool
+}
+
+// PopulateConfig writes the full config entry to config_map[0]. It is safe
+// to call repeatedly to update any field; the entire structure is
+// rewritten atomically by the BPF map.
+func (l *Loader) PopulateConfig(cfg Config) error {
+	c4 := cfg.CorednsIP.To4()
+	if c4 == nil {
+		return fmt.Errorf("corednsIP %s is not IPv4", cfg.CorednsIP)
+	}
+	h4 := cfg.HostResolverIP.To4()
+	if h4 == nil {
+		return fmt.Errorf("hostResolverIP %s is not IPv4", cfg.HostResolverIP)
+	}
+
+	bypass := uint16(0)
+	if cfg.Bypass {
+		bypass = 1
+	}
+
+	val := DnsGatewayGatewayConfig{
+		CorednsIp:      nativeUint32IP(c4),
+		HostResolverIp: nativeUint32IP(h4),
+		DnsPort:        dnsPort53,
+		Bypass:         bypass,
+	}
+	var key uint32 = 0
+	if err := l.objs.ConfigMap.Update(key, val, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("update config_map: %w", err)
+	}
+	return nil
+}
+
+// SetBypass toggles the bypass flag in config_map[0] without modifying the
+// other fields. It performs read-modify-write under the assumption that
+// only the controller mutates this entry.
+func (l *Loader) SetBypass(on bool) error {
+	var key uint32 = 0
+	var val DnsGatewayGatewayConfig
+	if err := l.objs.ConfigMap.Lookup(key, &val); err != nil {
+		return fmt.Errorf("lookup config_map: %w", err)
+	}
+	if on {
+		val.Bypass = 1
+	} else {
+		val.Bypass = 0
+	}
+	if err := l.objs.ConfigMap.Update(key, val, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("update config_map: %w", err)
+	}
+	return nil
+}
+
+// PopulateSuffixRules reconciles suffix_rules with the given patterns.
+//
+// Each pattern must be of the form "*.suffix" (wildcard-only in MVP).
+// Exact patterns and interior wildcards are rejected. The map is fully
+// reconciled: keys present in the map but not in patterns are deleted;
+// keys missing are added; keys present in both are left alone.
+func (l *Loader) PopulateSuffixRules(patterns []string) error {
+	desired := make(map[DnsGatewaySuffixKey]struct{}, len(patterns))
+	for _, p := range patterns {
+		suffix, isWildcard := dnsenc.ParsePattern(p)
+		if !isWildcard {
+			return fmt.Errorf("pattern %q must use *.suffix form (exact match unsupported in MVP)", p)
+		}
+		// Reject interior wildcards (e.g. "*.*.amazonaws.com" or
+		// "*.s3.*.amazonaws.com"). The BPF matcher does byte-for-byte
+		// suffix comparison and would otherwise install a literal '*'
+		// byte that never matches a real DNS query.
+		if strings.Contains(suffix, "*") {
+			return fmt.Errorf("pattern %q has interior wildcard; only leading *.suffix is supported", p)
+		}
+		key, err := dnsenc.EncodeSuffix(suffix)
+		if err != nil {
+			return fmt.Errorf("encode pattern %q: %w", p, err)
+		}
+		desired[DnsGatewaySuffixKey{Name: key}] = struct{}{}
+	}
+
+	// Snapshot existing keys so we can compute the diff.
+	existing := make(map[DnsGatewaySuffixKey]struct{})
+	iter := l.objs.SuffixRules.Iterate()
+	var k DnsGatewaySuffixKey
+	var v DnsGatewaySuffixValue
+	for iter.Next(&k, &v) {
+		existing[k] = struct{}{}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("iterate suffix_rules: %w", err)
+	}
+
+	// Delete stale keys FIRST so a near-full map can free capacity
+	// before we try to add replacements. Otherwise a reconcile that
+	// swaps any rule at the 1024-entry map capacity would fail with
+	// ENOSPC on the first Update and leave the old rules in place.
+	for key := range existing {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		if err := l.objs.SuffixRules.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return fmt.Errorf("delete stale suffix rule: %w", err)
+		}
+	}
+	// Add new keys.
+	val := DnsGatewaySuffixValue{Action: actionHostResolve}
+	for key := range desired {
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		if err := l.objs.SuffixRules.Update(key, val, ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("add suffix rule: %w", err)
+		}
+	}
+	return nil
+}
+
+// CountSuffixRules returns the current number of entries in suffix_rules.
+// O(n) — iterates the map.
+func (l *Loader) CountSuffixRules() (int, error) {
+	iter := l.objs.SuffixRules.Iterate()
+	var k DnsGatewaySuffixKey
+	var v DnsGatewaySuffixValue
+	count := 0
+	for iter.Next(&k, &v) {
+		count++
+	}
+	if err := iter.Err(); err != nil {
+		return 0, fmt.Errorf("iterate suffix_rules: %w", err)
+	}
+	return count, nil
+}
+
+// MetricID enumerates the metric_id values in bpf/dns_gateway.h.
+type MetricID uint32
+
+const (
+	MetricTotalPackets MetricID = iota
+	MetricDNSQueries
+	MetricSuffixMatch
+	MetricSuffixNoMatch
+	MetricBypassActive
+	MetricParseError
+	MetricEgressSnat
+	MetricEgressConntrackMiss
+	MetricEgressTotal
+	metricMax
+)
+
+// MetricSnapshot is a sum across CPUs for each metric ID.
+type MetricSnapshot [metricMax]uint64
+
+// ReadMetrics reads the per-CPU metrics_map and sums each metric across
+// all online CPUs.
+func (l *Loader) ReadMetrics() (MetricSnapshot, error) {
+	var snap MetricSnapshot
+	for id := range int(metricMax) {
+		var perCPU []uint64
+		if err := l.objs.MetricsMap.Lookup(uint32(id), &perCPU); err != nil {
+			return snap, fmt.Errorf("lookup metric %d: %w", id, err)
+		}
+		var sum uint64
+		for _, v := range perCPU {
+			sum += v
+		}
+		snap[id] = sum
+	}
+	return snap, nil
+}
+
+// nativeUint16 reinterprets two bytes (network/wire order) as a host
+// uint16 whose in-memory representation matches the given bytes.
+func nativeUint16(b []byte) uint16 {
+	return binary.NativeEndian.Uint16(b)
+}
+
+// nativeUint32IP returns the uint32 whose in-memory bytes match the
+// given 4-byte IPv4 address (already in network order).
+func nativeUint32IP(ip4 net.IP) uint32 {
+	return binary.NativeEndian.Uint32(ip4)
+}
