@@ -80,7 +80,7 @@ Start controller, create a veth pair, verify eBPF auto-attaches. Send DNS query 
 
 ## Phase 3: Reliability + Observability
 
-### 13. Health checker
+### 13. ✅ Health checker
 Periodic DNS A query probe to the VPC resolver (configurable interval/timeout). On N consecutive failures (configurable threshold), set `bypass=1` in `config_map`. On recovery (1 success), clear bypass. Uses `miekg/dns` for probe construction. Unit tests with mock DNS server.
 
 - **Blocked by**: #6
