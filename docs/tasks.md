@@ -98,14 +98,14 @@ Parse CLI flags (`--config`), load config, initialize `slog` logger, start metri
 - **Blocked by**: #11, #13, #14
 - **Files**: `cmd/bpf-dns-gateway/main.go`
 
-### 16. ✅ Integration test: bypass mode and health checker
+### 16. Integration test: bypass mode and health checker
 Set bypass flag, verify new DNS queries pass through unmodified (no ingress DNAT). **Verify in-flight queries already DNAT'd before bypass flipped still get SNAT'd correctly on egress** (egress does not honor bypass). Start health checker with unreachable resolver, verify bypass activates after threshold. Restore resolver, verify bypass clears. Test graceful shutdown: verify bypass set before detach. Verify conntrack TTL: stale entry past `CONNTRACK_TTL_NS` is deleted on egress and packet passes through.
 
 - **Blocked by**: #12, #13, #15
 - **Files**: `test/integration/bypass_test.go`
 
-### 17. ✅ Integration test: edge cases
-DNS edge cases: compression pointer in QNAME (passthrough + `parse_error` metric), QDCOUNT=0 (passthrough), **QDCOUNT>1 (passthrough + `parse_error`)**, malformed packet with `label_len > 63` (passthrough), TCP DNS on port 53 (passthrough, `protocol != UDP`), UDP checksum=0 packet, max-length QNAME (253 chars), **QNAME with many short labels (>20)** — passthrough since exceeds `MAX_LABELS`, query with uppercase letters (should match lowercase rules), **concurrent A+AAAA from same source port** with different txids — both responses correctly SNAT'd.
+### 17. Integration test: edge cases
+DNS edge cases: compression pointer in QNAME (passthrough + `parse_error` metric), QDCOUNT=0 (passthrough), **QDCOUNT>1 (passthrough + `parse_error`)**, malformed packet with `label_len > 63` (passthrough), TCP DNS on port 53 (passthrough, `protocol != UDP`), UDP checksum=0 packet, max-length QNAME (>128 wire bytes → passthrough), **QNAME with many short labels (>20)** — passthrough since exceeds `MAX_LABELS`, **query with uppercase letters → passthrough to CoreDNS** (BPF-side lowercasing was dropped for verifier budget; mixed/upper-case misses suffix rules — known limitation, `design.md §9.1`), **concurrent A+AAAA from same source port** with different txids — both responses correctly SNAT'd.
 
 - **Blocked by**: #8
 - **Files**: `test/integration/edge_cases_test.go`

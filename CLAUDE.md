@@ -36,32 +36,53 @@ test/{integration,e2e}/        Network-namespace and EKS tests
 docs/                          design.md, tasks.md, example-walkthrough.md, vpc-cni-coexistence.md
 ```
 
-## Implementation Process
+## Development Workflow
 
-For each task in `docs/tasks.md`, follow this loop:
+Work **phase by phase** through `docs/tasks.md`. This is the required loop —
+follow it unless the user explicitly says otherwise.
 
-1. **Implement one task end-to-end.** Code + unit tests in the same change.
-2. **Test on live EKS cluster** when feasible.
-   - Cluster: `viveksbh-Isengard@example-cluster.us-west-2.eksctl.io` (already in current kubectx).
-   - For BPF datapath tasks, prefer testing in a network namespace on a node first (cheaper), then on a cluster pod.
-   - For controller tasks, run the binary on a node (via `kubectl debug node/<name>` or SSH) and exercise pod create/delete.
-   - If a task is not testable live (e.g. DNS wire encoding unit logic), say so explicitly.
-3. **Get review from Codex.** Run `codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "<review prompt>"`. Pass the diff and the test results. Ask for severity-ranked findings.
-4. **Address Codex findings.** Apply fixes. If you and Codex disagree on a finding, **stop and loop the user in** with both sides of the argument before applying or dismissing.
-5. **Mark task complete in `docs/tasks.md`** (✅ next to the task heading) only after Codex review passes with no outstanding BLOCKER/MAJOR.
-6. **Commit after each task.** One commit per task (or per paired task batch) so review history aligns with task boundaries. Commit message format: `task #N: <subject>` followed by body summarizing what changed and key Codex findings.
+**Per task** (one checklist item at a time):
 
-Do NOT batch tasks. One task → test → review → fix → commit → next task.
+1. **Code** the task.
+2. **Test** it — build (`make build`/`make generate`), and validate behavior. For
+   datapath/controller changes that means a live test on the cluster (see the
+   EKS testing method below), not just a compile. Record the test method and
+   evidence in `docs/audit-impl/Phase-<N>-Task-<M>-<slug>.md` (template +
+   convention in `docs/audit-impl/README.md`).
+3. **Review** the implementation *and* the test artifacts with Codex
+   (`codex:codex-rescue`). Iterate until the review is clean. Codex has
+   hallucinated file/line claims here — **verify every finding against the
+   source** before acting on it.
+   - If a **major decision** comes up (design trade-off, behavior change, an
+     accepted limitation), **pull the user into the loop** before proceeding, and
+     record the decision in a `docs/audit/NNN-*.md` doc.
+4. **Commit** the task — in the same commit, check off its box in
+   `docs/tasks.md` and include its `docs/audit-impl/Phase-N-Task-M-*.md` doc.
+5. Move to the next task and repeat until the phase is complete.
 
-## Codex Review Workflow
+**Per phase:** when every task in a phase is done, **stop and wait for the user**
+to review all the commits and testing from that phase before starting the next
+phase. Do not roll into the next phase automatically.
 
-Use the `/codex:review` plugin (not raw `codex exec`):
+Keep commits scoped to one task. Don't push unless the user asks.
+
+### EKS testing method
+
+- Cluster: `viveksbh-Isengard@example-cluster.us-west-2.eksctl.io` (already in current kubectx).
+- Node for live tests: `ip-192-168-3-205.us-west-2.compute.internal`, kernel 6.12.
+- Privileged test pod pattern: `hostPID`, `hostNetwork`, `securityContext.privileged`, `/sys/fs/bpf` hostPath bind-mount, image `public.ecr.aws/amazonlinux/amazonlinux:2023` (`dnf install -y tar` before `kubectl cp`).
+- Cross-compile test/smoke binaries `CGO_ENABLED=0 go test -c` → `kubectl cp` → exec in pod (root + bpffs needed for eBPF load, TCX attach, netlink).
+- Pure-logic tasks (DNS wire encoding, config parsing) are unit-testable without the cluster — say so explicitly in the audit-impl doc.
+
+### Codex review
+
+Use the `codex:codex-rescue` agent for review. The companion script is also available directly:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review --background
 ```
 
-Then `/codex:result <job-id>` for full output. Background mode is reliable; foreground often hangs on this host.
+Then `/codex:result <job-id>` for full output. Background mode is more reliable; the reviewer occasionally returns "failed to output a response" — just re-run. `--wait` works when background flakes.
 
 For challenge / design-question reviews use `adversarial-review` with explicit focus text:
 
@@ -69,7 +90,7 @@ For challenge / design-question reviews use `adversarial-review` with explicit f
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" adversarial-review --background "<focus>"
 ```
 
-Codex review uses git diff (working tree vs HEAD), so commit only **after** review passes. Iterate uncommitted with re-reviews until clean.
+Codex review uses git diff (working tree vs HEAD), so commit only **after** review passes. Iterate uncommitted with re-reviews until clean. **Verify every Codex finding against the actual source** before acting — it has cited wrong file/line claims on this repo.
 
 ## Key Conventions
 
