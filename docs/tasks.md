@@ -130,6 +130,12 @@ Write `README.md`: project overview, architecture diagram, quick start (build, c
 - **Blocked by**: #15
 - **Files**: `README.md`, `CLAUDE.md`
 
+### 21. DaemonSet deployment template
+Provide an **alternative** deployment path as a Kubernetes DaemonSet (in addition to the systemd/AMI path), for clusters that prefer K8s-native rollout. Write `deploy/daemonset.yaml`: privileged pod (`hostPID`, `hostNetwork`, `securityContext.privileged` or the minimal `CAP_BPF`+`CAP_NET_ADMIN`+`CAP_SYS_ADMIN` set), `/sys/fs/bpf` hostPath bind-mount (`Bidirectional` mountPropagation), config via ConfigMap mounted at `/etc/bpf-dns-gateway/config.yaml`, broad tolerations (run on every node incl. control-plane if desired), `priorityClassName: system-node-critical`, resource requests/limits, readiness/liveness probes hitting `/healthz` on the metrics port, and Prometheus scrape annotations. Needs the container image from #19. Document the trade-offs vs systemd (loses start-before-kubelet and no-K8s-API-dependency guarantees — see decision doc `docs/audit/001-daemonset-deployment.md`).
+
+- **Blocked by**: #15, #19
+- **Files**: `deploy/daemonset.yaml`, `deploy/configmap.yaml`, `docs/audit/001-daemonset-deployment.md`
+
 ## Dependency Graph
 
 ```
@@ -160,6 +166,6 @@ Write `README.md`: project overview, architecture diagram, quick start (build, c
           #16 🧪 Bypass + shutdown test
                    │
                ├── #18 Systemd unit
-               ├── #19 Dockerfile
+               ├── #19 Dockerfile ──→ #21 DaemonSet template
                └── #20 README
 ```
