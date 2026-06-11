@@ -92,7 +92,7 @@ Prometheus `Collector` interface that reads per-CPU counters from `metrics_map`,
 - **Blocked by**: #6
 - **Files**: `internal/metrics/collector.go`, `internal/metrics/collector_test.go`
 
-### 15. Main entrypoint and lifecycle
+### 15. ✅ Main entrypoint and lifecycle
 Parse CLI flags (`--config`), load config, initialize `slog` logger, start metrics server, load eBPF + pin maps, populate config/rules, start controller (netlink + attach), start health checker, `sd_notify(READY)`. Signal handling: SIGTERM/SIGINT → set bypass flag → detach all → unpin maps → exit. Ordered startup and shutdown per design doc.
 
 - **Blocked by**: #11, #13, #14

@@ -97,6 +97,13 @@ func (m *Monitor) Start(ctx context.Context) error {
 	opts := netlink.LinkSubscribeOptions{
 		ListExisting: true,
 		ErrorCallback: func(err error) {
+			// During shutdown the socket read is interrupted as the
+			// subscription is torn down (EAGAIN / "resource
+			// temporarily unavailable"). That is expected, not a
+			// fault — suppress it once ctx is canceled.
+			if ctx.Err() != nil {
+				return
+			}
 			if errors.Is(err, netlink.ErrDumpInterrupted) {
 				m.logger.Warn("netlink dump interrupted; will resync via LinkList", "err", err)
 				dumpInterrupted.Store(true)
