@@ -98,7 +98,7 @@ Parse CLI flags (`--config`), load config, initialize `slog` logger, start metri
 - **Blocked by**: #11, #13, #14
 - **Files**: `cmd/bpf-dns-gateway/main.go`
 
-### 16. Integration test: bypass mode and health checker
+### 16. ✅ Integration test: bypass mode and health checker
 Set bypass flag, verify new DNS queries pass through unmodified (no ingress DNAT). **Verify in-flight queries already DNAT'd before bypass flipped still get SNAT'd correctly on egress** (egress does not honor bypass). Start health checker with unreachable resolver, verify bypass activates after threshold. Restore resolver, verify bypass clears. Test graceful shutdown: verify bypass set before detach. Verify conntrack TTL: stale entry past `CONNTRACK_TTL_NS` is deleted on egress and packet passes through.
 
 - **Blocked by**: #12, #13, #15

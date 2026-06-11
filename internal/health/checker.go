@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,9 @@ type BypassSetter interface {
 type Config struct {
 	// ResolverIP is the VPC DNS resolver to probe (IPv4).
 	ResolverIP net.IP
+	// ProbePort is the resolver UDP port. Defaults to 53. Overridable
+	// for tests that stand up a local DNS responder on a random port.
+	ProbePort int
 	// ProbeName is the DNS name queried (A record). Defaults to
 	// "amazon.com." if empty.
 	ProbeName string
@@ -77,8 +81,14 @@ func New(cfg Config, bypass BypassSetter, logger *slog.Logger) (*Checker, error)
 	if cfg.FailureThreshold < 1 {
 		return nil, fmt.Errorf("FailureThreshold must be >= 1")
 	}
+	if cfg.ProbePort < 0 || cfg.ProbePort > 65535 {
+		return nil, fmt.Errorf("ProbePort %d out of range (want 1..65535)", cfg.ProbePort)
+	}
 	if cfg.ProbeName == "" {
 		cfg.ProbeName = "amazon.com."
+	}
+	if cfg.ProbePort == 0 {
+		cfg.ProbePort = 53
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -95,7 +105,7 @@ func New(cfg Config, bypass BypassSetter, logger *slog.Logger) (*Checker, error)
 // probe on entry so startup bad-resolver state is detected without
 // waiting a full interval.
 func (c *Checker) Run(ctx context.Context) error {
-	server := net.JoinHostPort(c.cfg.ResolverIP.String(), "53")
+	server := net.JoinHostPort(c.cfg.ResolverIP.String(), strconv.Itoa(c.cfg.ProbePort))
 
 	c.probeOnce(ctx, server)
 

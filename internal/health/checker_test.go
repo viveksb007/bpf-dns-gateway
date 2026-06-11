@@ -56,6 +56,21 @@ func newTestChecker(t *testing.T, threshold int, q queryFunc) (*Checker, *fakeBy
 	return c, fb
 }
 
+func TestNew_RejectsInvalidProbePort(t *testing.T) {
+	for _, p := range []int{-1, 70000, 65536} {
+		_, err := New(Config{
+			ResolverIP:       net.ParseIP("10.0.0.2"),
+			ProbePort:        p,
+			Interval:         time.Second,
+			Timeout:          time.Millisecond,
+			FailureThreshold: 1,
+		}, &fakeBypass{}, nil)
+		if err == nil {
+			t.Errorf("ProbePort=%d: expected error", p)
+		}
+	}
+}
+
 func TestChecker_EnablesBypassAfterThreshold(t *testing.T) {
 	failing := func(ctx context.Context, server, name string, to time.Duration) error {
 		return context.DeadlineExceeded
