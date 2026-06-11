@@ -1,0 +1,111 @@
+# DaemonSet deployment for bpf-dns-gateway — the OPTIONAL Kubernetes-
+# native alternative to the systemd/AMI path (see docs/audit/
+# 001-daemonset-deployment.md for the trade-offs: a DS pod starts after
+# kubelet+CNI, so there is a brief boot window where new pods use CoreDNS
+# until startup reconciliation attaches to their veths — correct, just
+# unoptimized).
+#
+# Prereqs: the image from the Dockerfile pushed to a registry the cluster
+# can pull, and deploy/configmap.yaml applied.
+#
+#   kubectl apply -f deploy/configmap.yaml
+#   kubectl apply -f deploy/daemonset.yaml
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bpf-dns-gateway
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bpf-dns-gateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bpf-dns-gateway
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bpf-dns-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9153"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Only schedule on supported nodes: the image is linux/amd64 and
+      # the datapath relies on Linux eBPF/TCX (kernel 6.6+).
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      # Run on every (supported) node, including control-plane / tainted.
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      # The gateway never calls the Kubernetes API (config is a file,
+      # discovery is netlink). Don't mount an API token into this
+      # privileged hostNetwork pod.
+      automountServiceAccountToken: false
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Programs auto-detach (TCX) when the process exits; give it time
+      # to set bypass, detach, and unpin on rollout/delete.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: bpf-dns-gateway
+          image: bpf-dns-gateway:dev # <-- replace with your pushed image ref
+          args:
+            - "--config"
+            - "/etc/bpf-dns-gateway/config.yaml"
+          securityContext:
+            # eBPF load + TCX attach + netlink + bpffs pinning. privileged
+            # is the simplest; the minimal set is CAP_BPF + CAP_NET_ADMIN
+            # + CAP_SYS_ADMIN (+ root, for the /sys/fs/bpf pin dir).
+            privileged: true
+          ports:
+            - name: metrics
+              containerPort: 9153
+              hostPort: 9153
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9153
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9153
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: bpffs
+              mountPath: /sys/fs/bpf
+              # Bidirectional so map pins created in the pod are visible
+              # on the host bpffs (and survive across pod restarts).
+              mountPropagation: Bidirectional
+            - name: config
+              mountPath: /etc/bpf-dns-gateway
+              readOnly: true
+      volumes:
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
+            type: Directory
+        - name: config
+          configMap:
+            name: bpf-dns-gateway-config
+            items:
+              - key: config.yaml
+                path: config.yaml

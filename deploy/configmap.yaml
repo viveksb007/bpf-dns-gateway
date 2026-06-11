@@ -1,0 +1,32 @@
+# ConfigMap holding the bpf-dns-gateway config, mounted by the
+# DaemonSet at /etc/bpf-dns-gateway/config.yaml.
+#
+# Edit corednsServiceIP / hostResolverIP / rules for your cluster, then:
+#   kubectl apply -f deploy/configmap.yaml
+#   kubectl apply -f deploy/daemonset.yaml
+#
+# Changing this ConfigMap does NOT auto-reload the running pods (the
+# binary reads the file once at startup). Roll the DaemonSet to pick up
+# changes:  kubectl -n kube-system rollout restart ds/bpf-dns-gateway
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bpf-dns-gateway-config
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bpf-dns-gateway
+data:
+  config.yaml: |
+    corednsServiceIP: "10.100.0.10"
+    hostResolverIP: "169.254.169.253"
+    rules:
+      - { pattern: "*.s3.amazonaws.com",            action: host-resolve }
+      - { pattern: "*.s3.us-west-2.amazonaws.com",  action: host-resolve }
+      - { pattern: "*.dkr.ecr.us-west-2.amazonaws.com", action: host-resolve }
+      - { pattern: "*.sts.us-west-2.amazonaws.com", action: host-resolve }
+    metricsAddr: ":9153"
+    healthCheck:
+      interval: 5s
+      timeout: 2s
+      failureThreshold: 3
+    logLevel: info

@@ -74,7 +74,7 @@ More critically, some AWS service DNS responses are topology-aware (e.g., S3 gat
 
 ### What this is NOT
 
-- **Not a Kubernetes component** — no DaemonSet, no K8s API dependency, no RBAC. Runs as a systemd service baked into the node AMI.
+- **Primarily not a Kubernetes component** — the recommended path is a systemd service baked into the node AMI: no K8s API dependency at runtime, no RBAC, and it starts before kubelet. An **optional** DaemonSet path is also provided (`deploy/daemonset.yaml`) for clusters that prefer a K8s-native rollout; it trades away start-before-kubelet and adds a K8s-API dependency at rollout time but requires no code changes (the running pod still only uses a config file + netlink + bpffs). See `docs/audit/001-daemonset-deployment.md`.
 - **Not a DNS proxy** — no userspace packet handling. All DNS parsing and routing decisions happen in eBPF in the kernel.
 - **Not a DNS cache** — queries are forwarded as-is. CoreDNS and VPC DNS have their own caches.
 
