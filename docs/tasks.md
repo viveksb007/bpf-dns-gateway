@@ -118,7 +118,7 @@ Write `deploy/bpf-dns-gateway.service` (`Type=notify`, `After=network.target`, `
 - **Blocked by**: #15
 - **Files**: `deploy/bpf-dns-gateway.service`, `deploy/config.yaml`
 
-### 19. Dockerfile for CI builds
+### 19. ✅ Dockerfile for CI builds
 Multi-stage Dockerfile: stage 1 (clang + llvm + Go) compiles eBPF C and builds Go binary with bpf2go. Stage 2 minimal image with just the binary. Not used at runtime (binary goes into AMI), but needed for CI and reproducible builds.
 
 - **Blocked by**: #15
