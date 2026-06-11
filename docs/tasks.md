@@ -124,7 +124,7 @@ Multi-stage Dockerfile: stage 1 (clang + llvm + Go) compiles eBPF C and builds G
 - **Blocked by**: #15
 - **Files**: `Dockerfile`
 
-### 20. README and CLAUDE.md
+### 20. ✅ README and CLAUDE.md
 Write `README.md`: project overview, architecture diagram, quick start (build, configure, install), configuration reference, metrics reference. Write `CLAUDE.md` with build instructions, test commands, project structure, and key conventions for development.
 
 - **Blocked by**: #15

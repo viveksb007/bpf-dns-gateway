@@ -1,6 +1,6 @@
 # CLAUDE.md — bpf-dns-gateway
 
-eBPF TC programs intercept pod DNS queries on EKS. Match suffixes (e.g. `*.s3.amazonaws.com`) → DNAT to VPC DNS resolver, bypassing CoreDNS. Egress SNAT restores src so pods see response from CoreDNS (transparent). Runs as systemd service, not DaemonSet.
+eBPF TC programs intercept pod DNS queries on EKS. Match suffixes (e.g. `*.s3.amazonaws.com`) → DNAT to VPC DNS resolver, bypassing CoreDNS. Egress SNAT restores src so pods see response from CoreDNS (transparent). Primary deploy is a systemd service (baked into the node AMI, starts before kubelet); an optional DaemonSet path also exists (`deploy/daemonset.yaml`, see `docs/audit/001-daemonset-deployment.md`).
 
 ## Build / Test Commands
 
@@ -31,7 +31,7 @@ internal/
 bpf/
   dns_gateway.{c,h}            eBPF TC ingress + egress programs
   headers/                     vmlinux.h, bpf_helpers.h, bpf_endian.h
-deploy/                        systemd unit + example config.yaml
+deploy/                        systemd unit + config.yaml; daemonset.yaml + configmap.yaml (optional K8s path)
 test/{integration,e2e}/        Network-namespace and EKS tests
 docs/                          design.md, tasks.md, example-walkthrough.md, vpc-cni-coexistence.md
 ```
