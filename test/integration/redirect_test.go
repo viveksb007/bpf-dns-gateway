@@ -329,23 +329,19 @@ func TestSNATBypassesUnknownTxid(t *testing.T) {
 }
 
 // conntrackExists returns true iff conntrack_map has any entries.
-func conntrackExists(t *testing.T, l *bpf.Loader) bool {
+// openConntrack opens the pinned conntrack_map for direct inspection.
+func openConntrack(t *testing.T, l *bpf.Loader) *ebpf.Map {
 	t.Helper()
-	snap, err := l.ReadMetrics()
-	_ = err
-	// Use snap[MetricSuffixMatch] as a proxy: incremented only when the
-	// ingress program created a conntrack entry. This avoids exporting
-	// the conntrack map handle for a test-only helper.
-	_ = snap
-	// Actually iterate the map via the loader's exported helpers...
-	// We'll add a small helper below using the public ReadMetrics +
-	// re-reading SuffixMatch and EgressSnat counters. But simpler: open
-	// the pinned file directly.
-	pinPath := filepath.Join(l.PinDir(), "conntrack_map")
-	m, err := ebpf.LoadPinnedMap(pinPath, nil)
+	m, err := ebpf.LoadPinnedMap(filepath.Join(l.PinDir(), "conntrack_map"), nil)
 	if err != nil {
 		t.Fatalf("LoadPinnedMap conntrack_map: %v", err)
 	}
+	return m
+}
+
+func conntrackExists(t *testing.T, l *bpf.Loader) bool {
+	t.Helper()
+	m := openConntrack(t, l)
 	defer m.Close()
 	iter := m.Iterate()
 	var k bpf.DnsGatewayConntrackKey
