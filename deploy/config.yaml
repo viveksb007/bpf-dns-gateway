@@ -1,0 +1,53 @@
+# bpf-dns-gateway configuration.
+# Installed at /etc/bpf-dns-gateway/config.yaml (override with --config).
+
+# CoreDNS ClusterIP — the in-cluster DNS service address that pods send
+# queries to. Find it with: kubectl -n kube-system get svc kube-dns
+#   10.100.0.10  for a 10.100.0.0/16 service CIDR
+#   172.20.0.10  for a 172.20.0.0/16 service CIDR
+corednsServiceIP: "10.100.0.10"
+
+# VPC DNS resolver — REQUIRED. Queries matching a rule below are DNAT'd
+# here instead of going through CoreDNS.
+#   - The Amazon-provided VPC resolver is the VPC CIDR base + 2
+#     (e.g. 10.0.0.2 for a 10.0.0.0/16 VPC).
+#   - The VPC "DNS server" link-local address 169.254.169.253 also works
+#     and is independent of the VPC CIDR.
+# Auto-detection from /etc/resolv.conf is intentionally NOT supported:
+# nodes running systemd-resolved expose 127.0.0.53 (a loopback stub),
+# which cannot serve DNAT'd pod traffic.
+hostResolverIP: "169.254.169.253"
+
+# Suffix rules. Any matching suffix triggers a redirect; rules are not
+# ordered. MVP supports leading-wildcard suffixes only (`*.suffix`) with
+# the single action `host-resolve`. Interior wildcards and exact matches
+# are rejected at load time.
+#
+# Note: matching is case-sensitive in the datapath (MVP). Resolvers emit
+# lowercase QNAMEs in practice; mixed-case queries fall through to
+# CoreDNS (correct, just unoptimized).
+rules:
+  # S3 — global + per-region endpoints (add the regions you use).
+  - { pattern: "*.s3.amazonaws.com",            action: host-resolve }
+  - { pattern: "*.s3.us-east-1.amazonaws.com",  action: host-resolve }
+  - { pattern: "*.s3.us-west-2.amazonaws.com",  action: host-resolve }
+  # ECR (image pulls).
+  - { pattern: "*.dkr.ecr.us-east-1.amazonaws.com", action: host-resolve }
+  - { pattern: "*.dkr.ecr.us-west-2.amazonaws.com", action: host-resolve }
+  # STS (IRSA / AssumeRole).
+  - { pattern: "*.sts.us-east-1.amazonaws.com", action: host-resolve }
+  - { pattern: "*.sts.us-west-2.amazonaws.com", action: host-resolve }
+
+# Prometheus metrics + health endpoints listen here (/metrics, /healthz).
+metricsAddr: ":9153"
+
+# VPC DNS health probe. On failureThreshold consecutive failures the
+# gateway sets bypass=1 (all DNS goes to CoreDNS); on the first success
+# it clears bypass. timeout must be < interval.
+healthCheck:
+  interval: 5s
+  timeout: 2s
+  failureThreshold: 3
+
+# Log level: debug | info | warn | error.
+logLevel: info

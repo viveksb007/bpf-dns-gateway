@@ -1,0 +1,49 @@
+# systemd unit for bpf-dns-gateway.
+#
+# Install:
+#   cp bin/bpf-dns-gateway        /usr/local/bin/
+#   install -d /etc/bpf-dns-gateway
+#   cp deploy/config.yaml         /etc/bpf-dns-gateway/config.yaml   # edit first
+#   cp deploy/bpf-dns-gateway.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now bpf-dns-gateway
+#
+# In an EKS AMI, bake the binary + this unit in and have it enabled so it
+# starts before kubelet on every boot.
+
+[Unit]
+Description=BPF DNS Gateway (intercept pod DNS, DNAT AWS suffixes to VPC resolver)
+Documentation=https://github.com/viveksb007/bpf-dns-gateway
+# Need the network stack up (interfaces, routing) before we attach.
+After=network-online.target
+Wants=network-online.target
+# Need bpffs mounted at /sys/fs/bpf so map pinning works. sys-fs-bpf.mount
+# is the systemd unit name for the /sys/fs/bpf mountpoint.
+After=sys-fs-bpf.mount
+Requires=sys-fs-bpf.mount
+# Attach our TC programs before kubelet starts pods so the datapath is
+# ready as early as possible. (Pods created before we attach simply use
+# CoreDNS until startup reconciliation attaches to their veths — safe.)
+Before=kubelet.service
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/bpf-dns-gateway --config /etc/bpf-dns-gateway/config.yaml
+# eBPF map allocation needs locked memory; lift the limit.
+LimitMEMLOCK=infinity
+# On SIGTERM the process sets bypass, detaches all TCX programs, unpins
+# maps, then exits. Give it room to drain.
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+# --- Hardening (kept loose enough for eBPF + netlink + bpffs) ---
+# The program needs CAP_BPF/CAP_NET_ADMIN/CAP_SYS_ADMIN to load programs,
+# attach TCX, and subscribe to netlink. Running as root is simplest on a
+# node; tighten with AmbientCapabilities if running as a non-root user.
+User=root
+# Don't let a crash take down the node; just restart us.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

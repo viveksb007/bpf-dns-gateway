@@ -112,7 +112,7 @@ DNS edge cases: compression pointer in QNAME (passthrough + `parse_error` metric
 
 ## Phase 4: Packaging
 
-### 18. Systemd unit file and example config
+### 18. ✅ Systemd unit file and example config
 Write `deploy/bpf-dns-gateway.service` (`Type=notify`, `After=network.target`, `Before=kubelet.service`, `LimitMEMLOCK=infinity`, `Restart=always`). Write `deploy/config.yaml` with example S3/ECR/STS rules and inline comments.
 
 - **Blocked by**: #15
