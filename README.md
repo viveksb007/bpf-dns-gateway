@@ -175,6 +175,9 @@ coexistence is post-MVP ([`docs/vpc-cni-coexistence.md`](docs/vpc-cni-coexistenc
 
 ## Development
 
+End-to-end live validation on EKS (S3 workload, CoreDNS-vs-VPC-resolver proof):
+[`docs/testing.md`](docs/testing.md).
+
 See [`CLAUDE.md`](CLAUDE.md) for the build/test commands, the phase-by-phase
 workflow, the EKS live-test method, and key datapath conventions. Design docs
 live in [`docs/`](docs/).
