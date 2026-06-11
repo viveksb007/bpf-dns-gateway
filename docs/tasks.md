@@ -86,7 +86,7 @@ Periodic DNS A query probe to the VPC resolver (configurable interval/timeout). 
 - **Blocked by**: #6
 - **Files**: `internal/health/checker.go`, `internal/health/checker_test.go`
 
-### 14. Prometheus metrics collector
+### 14. ✅ Prometheus metrics collector
 Prometheus `Collector` interface that reads per-CPU counters from `metrics_map`, sums across CPUs, exposes as `bpf_dns_gateway_*` counters. Also expose controller gauges: `attached_veths`, `bypass_active`, `suffix_rules_loaded`, `health_check_failures` counter.
 
 - **Blocked by**: #6
