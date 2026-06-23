@@ -1,0 +1,50 @@
+# Querier Deployment (scaled to 1000 for the run) + its per-arm config.
+# Edit the ConfigMap (ARM/QMODE/DURATION/START_EPOCH) and rollout restart
+# between arms. Throwaway benchmark resource (docs/benchmark-diversity.md).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadgen-querier-cfg
+  namespace: default
+data:
+  ARM: "with-steady"
+  QMODE: "steady"
+  DURATION: "60"
+  START_EPOCH: "0"
+  QNAME: "test-bucket.s3.us-west-2.amazonaws.com."
+  AGG_URL: "http://loadgen-agg:8080"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen-querier
+  namespace: default
+  labels: { app: loadgen-querier }
+spec:
+  replicas: 0   # scaled up per arm
+  selector: { matchLabels: { app: loadgen-querier } }
+  template:
+    metadata: { labels: { app: loadgen-querier } }
+    spec:
+      nodeSelector: { kubernetes.io/os: linux, kubernetes.io/arch: amd64 }
+      # Spread across nodes so no single node's CoreDNS/veth path dominates.
+      topologySpreadConstraints:
+        - maxSkew: 5
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: loadgen-querier } }
+      containers:
+        - name: querier
+          image: IMAGE_PLACEHOLDER
+          env:
+            - { name: MODE, value: querier }
+            - { name: ARM,         valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: ARM } } }
+            - { name: QMODE,       valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: QMODE } } }
+            - { name: DURATION,    valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: DURATION } } }
+            - { name: START_EPOCH, valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: START_EPOCH } } }
+            - { name: QNAME,       valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: QNAME } } }
+            - { name: AGG_URL,     valueFrom: { configMapKeyRef: { name: loadgen-querier-cfg, key: AGG_URL } } }
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 48Mi }

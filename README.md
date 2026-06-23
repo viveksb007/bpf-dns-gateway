@@ -175,6 +175,9 @@ coexistence is post-MVP ([`docs/vpc-cni-coexistence.md`](docs/vpc-cni-coexistenc
 
 ## Development
 
+Scale benchmark (1000-pod S3 DNS IP diversity + latency, with vs without):
+[`docs/benchmark-diversity.md`](docs/benchmark-diversity.md).
+
 End-to-end live validation on EKS (S3 workload, CoreDNS-vs-VPC-resolver proof):
 [`docs/testing.md`](docs/testing.md).
 

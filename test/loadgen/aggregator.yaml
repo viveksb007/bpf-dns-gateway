@@ -1,0 +1,37 @@
+# Aggregator: collects per-arm unique IPs + latencies from queriers.
+# Throwaway benchmark resource (docs/benchmark-diversity.md).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen-agg
+  namespace: default
+  labels: { app: loadgen-agg }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: loadgen-agg } }
+  template:
+    metadata: { labels: { app: loadgen-agg } }
+    spec:
+      nodeSelector: { kubernetes.io/os: linux, kubernetes.io/arch: amd64 }
+      containers:
+        - name: agg
+          image: IMAGE_PLACEHOLDER
+          env: [{ name: MODE, value: aggregator }]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loadgen-agg
+  namespace: default
+spec:
+  selector: { app: loadgen-agg }
+  ports: [{ port: 8080, targetPort: 8080 }]
