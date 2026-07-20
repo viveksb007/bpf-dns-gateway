@@ -168,10 +168,9 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 
 		if (label_len == 0)
 			break;
-		if (label_len >= 0xC0) {
-			increment_metric(METRIC_PARSE_ERROR);
-			return TC_ACT_OK;
-		}
+		/* Any label length > 63 is invalid: compression pointers
+		 * (>= 0xC0) and EDNS/reserved forms (0x40..0xBF) all fall
+		 * here. Passthrough to CoreDNS with a parse_error metric. */
 		if (label_len > 63) {
 			increment_metric(METRIC_PARSE_ERROR);
 			return TC_ACT_OK;
