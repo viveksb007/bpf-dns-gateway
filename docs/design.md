@@ -355,13 +355,21 @@ a veth created between enumeration and listener startup would otherwise be misse
 ### 7.3 Shutdown Sequence (SIGTERM)
 
 ```
-1. Set bypass=1 in config_map (ingress stops new DNAT immediately; egress continues to SNAT in-flight responses until conntrack drains)
-2. Stop netlink listener
-3. Detach eBPF from all veths
-4. Unpin maps from /sys/fs/bpf/
-5. Close eBPF program fds
-6. Exit
+1. Stop the health checker and wait for it to exit (in-flight probe
+   included) — once shutdown begins, ownership of the bypass flag
+   transfers to the shutdown path; a late probe recovery must not be
+   able to clear the teardown bypass set in step 2
+2. Set bypass=1 in config_map (ingress stops new DNAT immediately; egress continues to SNAT in-flight responses until conntrack drains)
+3. Stop netlink listener
+4. Detach eBPF from all veths
+5. Unpin maps from /sys/fs/bpf/
+6. Close eBPF program fds
+7. Exit
 ```
+
+`Loader.SetBypass` additionally serializes its read-modify-write of
+`config_map[0]` with a mutex, so concurrent callers (health checker,
+shutdown) cannot interleave and lose a write.
 
 ### 7.4 Crash Safety
 

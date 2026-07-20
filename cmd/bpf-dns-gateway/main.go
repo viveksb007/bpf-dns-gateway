@@ -159,27 +159,36 @@ func run(configPath, pinDir string) error {
 	logger.Info("shutdown signal received; beginning ordered shutdown")
 	_ = sdNotifyStopping()
 
-	// 9a. Set bypass=1 immediately so ingress stops DNAT'ing new queries
+	// 9a. Wait for the health checker to stop: once ctx is canceled it
+	// makes no further SetBypass calls, so the teardown bypass set below
+	// cannot be clobbered by an in-flight probe's recovery path.
+	select {
+	case <-checker.Done():
+	case <-time.After(5 * time.Second):
+		logger.Warn("health checker did not stop within 5s")
+	}
+
+	// 9b. Set bypass=1 immediately so ingress stops DNAT'ing new queries
 	// while we tear down (egress keeps draining in-flight responses).
 	if err := loader.SetBypass(true); err != nil {
 		logger.Error("failed to set bypass during shutdown", "err", err)
 	}
 
-	// 9b. Wait for the controller to finish detaching from all veths.
+	// 9c. Wait for the controller to finish detaching from all veths.
 	select {
 	case <-ctrl.Done():
 	case <-time.After(10 * time.Second):
 		logger.Warn("controller did not finish detaching within 10s")
 	}
 
-	// 9c. Stop the metrics server.
+	// 9d. Stop the metrics server.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("metrics server shutdown error", "err", err)
 	}
 
-	// 9d. Unpin maps + close program fds (TCX already detached above).
+	// 9e. Unpin maps + close program fds (TCX already detached above).
 	if err := loader.Close(); err != nil {
 		logger.Warn("loader close error", "err", err)
 	}

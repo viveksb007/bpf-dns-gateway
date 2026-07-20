@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/rlimit"
@@ -21,6 +22,11 @@ const DefaultPinDir = "/sys/fs/bpf/dns-gateway"
 type Loader struct {
 	objs   DnsGatewayObjects
 	pinDir string
+
+	// configMu serializes writers of config_map[0]. SetBypass is a
+	// read-modify-write, and the health checker and the shutdown path
+	// may call it concurrently; without the lock one write can be lost.
+	configMu sync.Mutex
 }
 
 // New loads the embedded eBPF object file, removes the MEMLOCK rlimit,
@@ -54,7 +60,7 @@ func New(pinDir string) (*Loader, error) {
 
 	l := &Loader{pinDir: pinDir}
 	opts := ebpf.CollectionOptions{
-		Maps: ebpf.MapOptions{PinPath: pinDir},
+		Maps:     ebpf.MapOptions{PinPath: pinDir},
 		Programs: ebpf.ProgramOptions{LogLevel: ebpf.LogLevelStats},
 	}
 	if err := spec.LoadAndAssign(&l.objs, &opts); err != nil {

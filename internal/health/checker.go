@@ -60,6 +60,11 @@ type Checker struct {
 	// collector goroutine, so they are atomic.
 	bypassActive  atomic.Bool
 	probeFailures atomic.Uint64
+
+	// done is closed when Run exits (after any in-flight probe has
+	// completed), so shutdown can order "checker stopped" before
+	// setting the teardown bypass flag.
+	done chan struct{}
 }
 
 // New constructs a Checker. ResolverIP must be IPv4; Interval/Timeout/
@@ -98,13 +103,16 @@ func New(cfg Config, bypass BypassSetter, logger *slog.Logger) (*Checker, error)
 		bypass: bypass,
 		logger: logger,
 		query:  udpQuery,
+		done:   make(chan struct{}),
 	}, nil
 }
 
 // Run probes on a ticker until ctx is canceled. It does one immediate
 // probe on entry so startup bad-resolver state is detected without
-// waiting a full interval.
+// waiting a full interval. When Run returns, no further SetBypass calls
+// will be made and Done() is closed.
 func (c *Checker) Run(ctx context.Context) error {
+	defer close(c.done)
 	server := net.JoinHostPort(c.cfg.ResolverIP.String(), strconv.Itoa(c.cfg.ProbePort))
 
 	c.probeOnce(ctx, server)
@@ -121,6 +129,11 @@ func (c *Checker) Run(ctx context.Context) error {
 	}
 }
 
+// Done returns a channel closed when Run has exited and the checker
+// will make no further SetBypass calls. Shutdown waits on this before
+// setting the teardown bypass so an in-flight probe cannot clobber it.
+func (c *Checker) Done() <-chan struct{} { return c.done }
+
 // ProbeFailures returns the cumulative count of failed probes (for the
 // metrics collector). Safe to call from any goroutine.
 func (c *Checker) ProbeFailures() uint64 { return c.probeFailures.Load() }
@@ -131,6 +144,16 @@ func (c *Checker) BypassActive() bool { return c.bypassActive.Load() }
 
 func (c *Checker) probeOnce(ctx context.Context, server string) {
 	err := c.query(ctx, server, c.cfg.ProbeName, c.cfg.Timeout)
+
+	// Once shutdown has begun (ctx canceled), ownership of the bypass
+	// flag transfers to the shutdown path, which sets bypass=1 for
+	// teardown. A probe completing after that must not mutate bypass —
+	// in particular a success here would otherwise re-enable DNAT
+	// mid-teardown (design.md §7.3).
+	if ctx.Err() != nil {
+		return
+	}
+
 	if err != nil {
 		c.probeFailures.Add(1)
 		c.consecutiveFailures++

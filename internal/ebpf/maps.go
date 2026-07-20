@@ -61,16 +61,22 @@ func (l *Loader) PopulateConfig(cfg Config) error {
 		Bypass:         bypass,
 	}
 	var key uint32 = 0
+	l.configMu.Lock()
+	defer l.configMu.Unlock()
 	if err := l.objs.ConfigMap.Update(key, val, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("update config_map: %w", err)
 	}
 	return nil
 }
 
-// SetBypass toggles the bypass flag in config_map[0] without modifying the
-// other fields. It performs read-modify-write under the assumption that
-// only the controller mutates this entry.
+// SetBypass toggles the bypass flag in config_map[0] without modifying
+// the other fields. The read-modify-write is serialized by configMu:
+// the health checker and the shutdown path may both call SetBypass
+// concurrently, and an unserialized interleaving could lose the
+// shutdown's bypass=1 write.
 func (l *Loader) SetBypass(on bool) error {
+	l.configMu.Lock()
+	defer l.configMu.Unlock()
 	var key uint32 = 0
 	var val DnsGatewayGatewayConfig
 	if err := l.objs.ConfigMap.Lookup(key, &val); err != nil {
