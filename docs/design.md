@@ -516,6 +516,7 @@ Structured logging (Go `slog`) with levels:
 4. **UDP DNS only** — TCP DNS (used for zone transfers and large responses) bypasses eBPF and goes to CoreDNS. This is correct behavior.
 5. **Suffix wildcards only** — interior wildcards (`*.s3.*.amazonaws.com`) must be expanded to explicit per-region suffixes.
 6. **Single host resolver IP** — the config supports one VPC DNS resolver IP. On EKS this is the VPC CIDR base +2 and is stable.
+7. **QNAME ≤ 128 wire bytes and ≤ `MAX_LABELS` (10) labels** — longer names pass through to CoreDNS. The label bound is deliberately conservative (AWS service names have ≤7 labels) because the suffix-match loops drive BPF verifier state: `MAX_LABELS=20` loaded on kernel 6.12 but **exhausted the verifier's 1M-instruction limit on kernel 6.18**. `MAX_LABELS=10` loads on both. A verifier-independent rewrite (`bpf_loop()`) is the durable fix — tracked as future work.
 
 ## 12. Project Structure
 

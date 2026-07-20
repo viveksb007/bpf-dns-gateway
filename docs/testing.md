@@ -152,3 +152,39 @@ deployment (which starts before kubelet) shrinks this window further.
 Gateway DS + ConfigMap, workload Deployment, and helper pods deleted. CoreDNS
 ConfigMap restored to the original (`cache 30`, no `log`/MINTTL) and rolled out;
 CoreDNS healthy. The ECR repo remains in the account.
+
+---
+
+## Re-validation on `cl-load-test` (kernel 6.18) — portability finding
+
+Re-ran the functional validation on a second EKS cluster, `cl-load-test`
+(2 × m5.large, **Amazon Linux 2023, kernel 6.18**, amd64, IPv4).
+
+**Finding — verifier overflow on kernel 6.18.** The gateway image that loaded
+cleanly on kernel 6.12 was **rejected by the 6.18 verifier**:
+
+```
+load ebpf: verifier rejected programs: BPF program is too large.
+Processed 1000001 insn (limit 1000000) ... total_states 28841
+```
+
+The nested suffix-match loops (outer `MAX_LABELS`, inner per-boundary 128-byte
+copy) explore more verifier states on 6.18 than 6.12 and tipped over the 1M
+instruction ceiling. **Fix:** `MAX_LABELS` 20 → 10 (`bpf/dns_gateway.h`) — AWS
+service names have ≤7 labels, so no real name is affected; names with >10 labels
+pass through to CoreDNS. After the fix the program loads on both 6.12 and 6.18.
+Durable fix (verifier-independent `bpf_loop()`) tracked as future work. See
+design.md §11.6.
+
+**Validation result (post-fix, kernel 6.18)** — same 4-signal method, 4-replica
+`getent` workload:
+
+| State | workload S3 FQDN → CoreDNS (Δ/60s) | gateway |
+|-------|-----------------------------------|---------|
+| **gateway active** | **0** | `suffix_match_total` 100 / 112 (both nodes), `egress_snat_total` 1:1, `bypass_active 0` |
+| **bypass** (`hostResolverIP`→`192.0.2.1`) | **120** (= 4 pods × ~1 q/2s × 60s) | `bypass_active 1` |
+
+Deterministic swing: with the gateway active CoreDNS receives **zero** real S3
+FQDN queries; under bypass it receives exactly the workload's query rate.
+Confirms the datapath works on kernel 6.18 after the `MAX_LABELS` fix. Cluster
+restored (CoreDNS `log` removed; DS + workload deleted).

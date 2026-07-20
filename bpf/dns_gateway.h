@@ -10,7 +10,12 @@
 #define IPPROTO_UDP 17
 
 #define MAX_DNS_NAME_LEN 128
-#define MAX_LABELS       20
+/* MAX_LABELS bounds the suffix-match loops. Kept at 10 (not the DNS max
+ * of ~127) because AWS service names have <=7 labels, and the nested
+ * label-walk x per-boundary copy loops drive BPF verifier state; 20
+ * exhausted the 1M-instruction limit on kernel 6.18 (passed on 6.12).
+ * 10 halves the state and loads across 6.12 and 6.18. */
+#define MAX_LABELS       10
 #define CONNTRACK_MAX    65536
 
 /* Conntrack entry TTL: max time a DNAT'd query can wait for its response

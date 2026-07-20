@@ -223,7 +223,7 @@ func TestEdge_QNAMEOver128(t *testing.T) {
 
 func TestEdge_ManyShortLabels(t *testing.T) {
 	l := edgeLoader(t)
-	// > MAX_LABELS (20) single-char labels -> passthrough.
+	// > MAX_LABELS (10) single-char labels -> passthrough.
 	name := ""
 	for i := 0; i < 25; i++ {
 		name += "a."
@@ -232,7 +232,7 @@ func TestEdge_ManyShortLabels(t *testing.T) {
 	dns := dnsHeader(1)
 	dns = append(dns, question(name)...)
 	pkt := buildQueryProto(17, dns, false)
-	expectPassthrough(t, l, pkt, ">20 labels")
+	expectPassthrough(t, l, pkt, ">MAX_LABELS labels")
 }
 
 func TestEdge_UppercasePassthrough(t *testing.T) {
