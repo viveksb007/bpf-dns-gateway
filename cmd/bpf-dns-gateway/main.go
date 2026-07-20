@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -115,7 +116,11 @@ func run(configPath, pinDir string) error {
 		cleanupLoader()
 		return fmt.Errorf("register collector: %w", err)
 	}
-	metricsSrv := startMetricsServer(cfg.MetricsAddr, reg, logger)
+	metricsSrv, err := startMetricsServer(cfg.MetricsAddr, reg, logger)
+	if err != nil {
+		cleanupLoader()
+		return fmt.Errorf("start metrics server: %w", err)
+	}
 
 	// 6. Lifecycle context, canceled on SIGTERM/SIGINT.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -201,21 +206,31 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }
 
-func startMetricsServer(addr string, reg *prometheus.Registry, logger *slog.Logger) *http.Server {
+// startMetricsServer binds addr synchronously so a bad/busy metricsAddr
+// fails startup instead of leaving the process running unobservable
+// (the old ListenAndServe-in-goroutine path only logged the bind error).
+// The returned server's Addr field holds the actual bound address (useful
+// when addr uses port 0 in tests). Serve errors after a successful bind
+// are still only logged: they are runtime, not startup, failures.
+func startMetricsServer(addr string, reg *prometheus.Registry, logger *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	srv := &http.Server{Addr: addr, Handler: mux}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("bind metrics listener on %s: %w", addr, err)
+	}
+	srv := &http.Server{Addr: ln.Addr().String(), Handler: mux}
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("metrics server failed", "addr", addr, "err", err)
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server failed", "addr", srv.Addr, "err", err)
 		}
 	}()
-	logger.Info("metrics server listening", "addr", addr)
-	return srv
+	logger.Info("metrics server listening", "addr", srv.Addr)
+	return srv, nil
 }
 
 // --- sd_notify (systemd Type=notify) ---
