@@ -214,18 +214,19 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 		if (suffix_len == 0 || suffix_len > MAX_DNS_NAME_LEN)
 			break;
 
-		/* Zero the lookup buffer */
-		__builtin_memset(scratch->lookup, 0, MAX_DNS_NAME_LEN);
-
 		/* Copy suffix into lookup buffer.
 		 *
 		 * We need to copy `suffix_len` bytes starting at `suffix_start`
 		 * inside `scratch->qname` to the start of `scratch->lookup`.
 		 * The verifier struggles with `qname[suffix_start + j]` because
 		 * `suffix_start` is data-dependent. Solution: a fully unrolled
-		 * inner loop of 256 iterations where each iteration uses a
-		 * constant offset, and we conditionally copy when that offset
-		 * falls inside the suffix range.
+		 * inner loop of MAX_DNS_NAME_LEN iterations where each iteration
+		 * uses a constant offset, and we conditionally copy when that
+		 * offset falls inside the suffix range.
+		 *
+		 * No separate memset needed: the loop writes every index in
+		 * [0, MAX_DNS_NAME_LEN) — the suffix bytes for k < sl and 0 for
+		 * k >= sl — so the whole lookup buffer is fully defined here.
 		 */
 		__u32 ss = suffix_start & (MAX_DNS_NAME_LEN - 1);
 		/* Cap suffix_len at MAX_DNS_NAME_LEN. We can't mask with
