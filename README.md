@@ -19,37 +19,60 @@ CoreDNS's location.
 
 ## Architecture
 
-```
-            Pod netns                         Host netns
-        ┌───────────────┐
-        │ DNS query      │   veth      ┌──────────────────────────────┐
-        │ dst=CoreDNS:53 │────────────▶│ TC ingress (host-side veth)  │
-        └───────────────┘             │  parse ETH/IP/UDP/DNS         │
-                                       │  suffix match (hash map)      │
-                                       │   match → DNAT dst=VPC DNS    │
-                                       │   + conntrack {pod,port,txid} │
-                                       │   no match / error → CoreDNS  │
-                                       └───────────────┬──────────────┘
-                                                       │ kernel routing
-                                          matched ─────┴──▶ VPC DNS resolver
-                                                       │
-                                       ┌───────────────▼──────────────┐
-                                       │ TC egress (host-side veth)    │
-                                       │  src=VPC DNS + conntrack hit  │
-                                       │   → SNAT src=CoreDNS          │
-                                       │   (stale/expired → passthrough)│
-                                       └───────────────┬──────────────┘
-                                                       │
-        ┌───────────────┐                              │
-        │ pod sees       │◀─────────────────────────────┘
-        │ src=CoreDNS:53 │   (transparent)
-        └───────────────┘
+### Datapath (per DNS query)
+
+```mermaid
+flowchart TB
+    pod["<b>Pod</b><br/>DNS query → CoreDNS:53<br/>(e.g. 10.100.0.10:53)"]
+
+    subgraph host["Host netns · host-side veth"]
+        ingress{{"<b>TC ingress</b> (eBPF)<br/>parse ETH→IP→UDP→DNS<br/>dst=CoreDNS:53? QR=0? QDCOUNT=1?<br/>suffix match (hash map, per label boundary)"}}
+        egress{{"<b>TC egress</b> (eBPF)<br/>src=VPC DNS:53 + conntrack hit?<br/>+ within TTL (5s)?"}}
+    end
+
+    route{"kernel<br/>routing"}
+    vpc["<b>VPC DNS resolver</b><br/>169.254.169.253:53"]
+    coredns["<b>CoreDNS</b><br/>ClusterIP:53"]
+
+    pod -->|"veth"| ingress
+    ingress -->|"<b>match</b>: DNAT dst→VPC DNS<br/>+ write conntrack (pod_ip/port/txid)"| route
+    ingress -.->|"no match / bypass / parse error / error<br/>TC_ACT_OK, unchanged"| route
+    route -->|"dst=VPC DNS"| vpc
+    route -.->|"dst=CoreDNS"| coredns
+    vpc -->|"response src=VPC DNS:53"| egress
+    egress -->|"<b>hit + fresh</b>: SNAT src→CoreDNS<br/>+ delete conntrack"| pod
+    egress -.->|"miss / stale past TTL / bypass off-path<br/>passthrough, unchanged"| pod
+
+    style pod fill:#e8f0fe,stroke:#4285f4,color:#111
+    style vpc fill:#e6f4ea,stroke:#34a853,color:#111
+    style coredns fill:#fef7e0,stroke:#f9ab00,color:#111
+    style ingress fill:#f3e8fd,stroke:#a142f4,color:#111
+    style egress fill:#f3e8fd,stroke:#a142f4,color:#111
 ```
 
+Solid arrows are the redirect path (matched query → VPC resolver → SNAT'd
+back); dashed arrows are the safe fallbacks that leave the packet untouched
+(`TC_ACT_OK`). From the pod's view the answer always appears to come from
+CoreDNS — the interception is transparent.
+
+### Control plane
+
 A small Go controller loads the eBPF programs, populates the rule/config BPF
-maps, watches netlink for veths and attaches via TCX, health-checks the VPC
-resolver (flipping a bypass flag when it's unhealthy), and exports Prometheus
-metrics.
+maps, subscribes to netlink for veth events and attaches the programs via TCX,
+health-checks the VPC resolver (flipping a bypass flag when it's unhealthy),
+and exports Prometheus metrics.
+
+```mermaid
+flowchart LR
+    cfg["config.yaml<br/>(rules, IPs, health)"] --> ctrl
+    nl["netlink<br/>RTM_NEWLINK/DELLINK"] --> ctrl
+    ctrl["<b>controller</b> (Go)"] -->|"load + TCX attach"| bpf["eBPF ingress/egress<br/>on each pod veth"]
+    ctrl -->|"populate"| maps["BPF maps<br/>config · suffix_rules · conntrack"]
+    ctrl -->|"probe VPC DNS<br/>N fails → bypass=1"| health["health checker"]
+    ctrl -->|":9153 /metrics /healthz"| prom["Prometheus"]
+    bpf --- maps
+    style ctrl fill:#f3e8fd,stroke:#a142f4,color:#111
+```
 
 See [`docs/design.md`](docs/design.md) for the full spec and
 [`docs/example-walkthrough.md`](docs/example-walkthrough.md) for a packet trace.
@@ -170,8 +193,9 @@ Prometheus metrics + `/healthz` on `metricsAddr` (default `:9153`).
 ## Limitations (MVP)
 
 IPv4 + UDP only · x86_64 / kernel 6.6+ · suffix wildcards only ·
-case-sensitive matching · QNAME ≤128 wire bytes · VPC CNI network-policy
-coexistence is post-MVP ([`docs/vpc-cni-coexistence.md`](docs/vpc-cni-coexistence.md)).
+case-sensitive matching · QNAME ≤128 wire bytes and ≤10 labels (longer names
+pass through to CoreDNS) · VPC CNI network-policy coexistence is post-MVP
+([`docs/vpc-cni-coexistence.md`](docs/vpc-cni-coexistence.md)).
 
 ## Development
 
