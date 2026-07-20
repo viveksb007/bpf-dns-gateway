@@ -1,2 +1,6 @@
 bin/
 *.o
+# The bpf2go-generated object is embedded via go:embed in
+# internal/ebpf/dnsgateway_x86_bpfel.go, so it must be committed for
+# `go build` to work on a fresh clone without clang/libbpf.
+!internal/ebpf/*_bpfel.o
