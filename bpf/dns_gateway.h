@@ -38,6 +38,14 @@ enum metric_id {
 	METRIC_EGRESS_SNAT,
 	METRIC_EGRESS_CONNTRACK_MISS,
 	METRIC_EGRESS_TOTAL,
+	/* NAT rewrite helper (bpf_skb_store_bytes / bpf_l{3,4}_csum_replace)
+	 * failed; already-applied steps were reverted and the packet passed
+	 * through unmodified (ingress: falls back to CoreDNS). */
+	METRIC_NAT_ERROR,
+	/* The revert itself also failed — packet may be inconsistent
+	 * (rewritten address vs stale checksum) and will likely be dropped
+	 * downstream. Should never fire; alarm-worthy if it does. */
+	METRIC_NAT_REVERT_FAIL,
 	METRIC__MAX,
 };
 

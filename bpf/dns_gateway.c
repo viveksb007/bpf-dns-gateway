@@ -54,6 +54,61 @@ static __always_inline void increment_metric(__u32 metric_id)
 		(*val)++;
 }
 
+/* nat_rewrite_addr rewrites one IPv4 address (saddr for SNAT, daddr for
+ * DNAT) at addr_off and fixes the IP header checksum and the UDP
+ * checksum (pseudo-header). Closes the design.md §9.1 gap: every helper
+ * return is checked, and on a mid-sequence failure the already-applied
+ * steps are reverted so the packet leaves this program either fully
+ * rewritten or byte-identical to how it arrived — never half-rewritten
+ * (a rewritten address with a stale checksum would be dropped
+ * downstream instead of falling back to CoreDNS).
+ *
+ * Returns:
+ *   0  full success
+ *  -1  a step failed; packet fully reverted (caller: passthrough +
+ *      METRIC_NAT_ERROR)
+ *  -2  a step failed AND the revert failed; packet may be inconsistent
+ *      (caller: passthrough + METRIC_NAT_ERROR + METRIC_NAT_REVERT_FAIL)
+ *
+ * udp_csum_off is the absolute skb offset of the UDP checksum field.
+ */
+static __always_inline int nat_rewrite_addr(struct __sk_buff *skb,
+					    __u32 addr_off, __u32 udp_csum_off,
+					    __u32 old_addr, __u32 new_addr)
+{
+	/* Step 1: rewrite the address bytes. Nothing applied on failure. */
+	if (bpf_skb_store_bytes(skb, addr_off, &new_addr, 4, 0) < 0)
+		return -1;
+
+	/* Step 2: IP header checksum. */
+	if (bpf_l3_csum_replace(skb, ETH_HLEN + 10, old_addr, new_addr, 4) < 0) {
+		if (bpf_skb_store_bytes(skb, addr_off, &old_addr, 4, 0) < 0)
+			return -2;
+		return -1;
+	}
+
+	/* Step 3: UDP checksum (pseudo-header includes the address). */
+	if (bpf_l4_csum_replace(skb, udp_csum_off, old_addr, new_addr,
+				BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4) < 0) {
+		int rc = -1;
+		if (bpf_l3_csum_replace(skb, ETH_HLEN + 10, new_addr, old_addr, 4) < 0)
+			rc = -2;
+		if (bpf_skb_store_bytes(skb, addr_off, &old_addr, 4, 0) < 0)
+			rc = -2;
+		return rc;
+	}
+
+	return 0;
+}
+
+/* count_nat_failure records the outcome of a failed nat_rewrite_addr. */
+static __always_inline void count_nat_failure(int rc)
+{
+	increment_metric(METRIC_NAT_ERROR);
+	if (rc == -2)
+		increment_metric(METRIC_NAT_REVERT_FAIL);
+}
+
 /* --- Ingress: DNS parse + suffix match + DNAT --- */
 
 SEC("tc/ingress")
@@ -274,19 +329,18 @@ do_dnat:
 	if (bpf_map_update_elem(&conntrack_map, &ct_key, &ct_val, BPF_ANY) < 0)
 		return TC_ACT_OK;
 
-	/* DNAT: rewrite destination IP from CoreDNS to host resolver */
-	__u32 old_daddr = iph.daddr;
-	__u32 new_daddr = cfg->host_resolver_ip;
-
-	/* IP daddr is at offset ETH_HLEN + 16 */
-	bpf_skb_store_bytes(skb, ETH_HLEN + 16, &new_daddr, 4, 0);
-
-	/* Fix IP header checksum (offset ETH_HLEN + 10) */
-	bpf_l3_csum_replace(skb, ETH_HLEN + 10, old_daddr, new_daddr, 4);
-
-	/* Fix UDP checksum (pseudo-header includes dst IP) */
-	bpf_l4_csum_replace(skb, udp_offset + 6, old_daddr, new_daddr,
-			    BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4);
+	/* DNAT: rewrite destination IP from CoreDNS to host resolver.
+	 * All helper returns are checked; on failure the packet is
+	 * reverted/passed through unchanged and the just-inserted
+	 * conntrack entry is removed so state matches the packet (the
+	 * query proceeds to CoreDNS as if never matched). */
+	int rc = nat_rewrite_addr(skb, ETH_HLEN + 16, udp_offset + 6,
+				  iph.daddr, cfg->host_resolver_ip);
+	if (rc < 0) {
+		count_nat_failure(rc);
+		bpf_map_delete_elem(&conntrack_map, &ct_key);
+		return TC_ACT_OK;
+	}
 
 	return TC_ACT_OK;
 }
@@ -371,19 +425,18 @@ int dns_gateway_egress(struct __sk_buff *skb)
 		return TC_ACT_OK;
 	}
 
-	/* SNAT: rewrite source IP from host resolver to CoreDNS */
-	__u32 old_saddr = iph.saddr;
-	__u32 new_saddr = ct_val->coredns_ip;
-
-	/* IP saddr is at offset ETH_HLEN + 12 */
-	bpf_skb_store_bytes(skb, ETH_HLEN + 12, &new_saddr, 4, 0);
-
-	/* Fix IP header checksum */
-	bpf_l3_csum_replace(skb, ETH_HLEN + 10, old_saddr, new_saddr, 4);
-
-	/* Fix UDP checksum */
-	bpf_l4_csum_replace(skb, udp_offset + 6, old_saddr, new_saddr,
-			    BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4);
+	/* SNAT: rewrite source IP from host resolver to CoreDNS. All
+	 * helper returns are checked; on failure the packet passes
+	 * through reverted/unchanged (src stays host_resolver_ip — the
+	 * pod's resolver discards it and retries; the retried query gets
+	 * a fresh conntrack entry). Keep this entry so a fast retry of
+	 * the same txid still has a mapping; it ages out via TTL/LRU. */
+	int rc = nat_rewrite_addr(skb, ETH_HLEN + 12, udp_offset + 6,
+				  iph.saddr, ct_val->coredns_ip);
+	if (rc < 0) {
+		count_nat_failure(rc);
+		return TC_ACT_OK;
+	}
 
 	/* Delete conntrack entry */
 	bpf_map_delete_elem(&conntrack_map, &ct_key);

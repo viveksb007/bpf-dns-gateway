@@ -186,6 +186,12 @@ const (
 	MetricEgressSnat
 	MetricEgressConntrackMiss
 	MetricEgressTotal
+	// MetricNatError counts NAT rewrite helper failures where the
+	// packet was cleanly reverted and passed through unmodified.
+	MetricNatError
+	// MetricNatRevertFail counts NAT failures where the revert itself
+	// also failed (packet possibly inconsistent). Should stay 0.
+	MetricNatRevertFail
 	metricMax
 )
 

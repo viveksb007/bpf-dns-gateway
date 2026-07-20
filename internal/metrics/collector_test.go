@@ -11,12 +11,12 @@ import (
 )
 
 type fakeDatapath struct {
-	snap        bpf.MetricSnapshot
-	rules       int
-	readErr     error
-	countErr    error
-	readCalls   int
-	countCalls  int
+	snap       bpf.MetricSnapshot
+	rules      int
+	readErr    error
+	countErr   error
+	readCalls  int
+	countCalls int
 }
 
 func (f *fakeDatapath) ReadMetrics() (bpf.MetricSnapshot, error) {
@@ -39,7 +39,7 @@ type fakeHealth struct {
 }
 
 func (f *fakeHealth) ProbeFailures() uint64 { return f.failures }
-func (f *fakeHealth) BypassActive() bool     { return f.bypass }
+func (f *fakeHealth) BypassActive() bool    { return f.bypass }
 
 func registerAndGather(t *testing.T, c *Collector) string {
 	t.Helper()
@@ -73,6 +73,8 @@ func TestCollector_AllMetricsPresent(t *testing.T) {
 	dp.snap[bpf.MetricDNSQueries] = 40
 	dp.snap[bpf.MetricSuffixMatch] = 12
 	dp.snap[bpf.MetricEgressSnat] = 11
+	dp.snap[bpf.MetricNatError] = 2
+	dp.snap[bpf.MetricNatRevertFail] = 1
 	at := &fakeAttach{n: 7}
 	he := &fakeHealth{failures: 3, bypass: true}
 
@@ -84,6 +86,8 @@ func TestCollector_AllMetricsPresent(t *testing.T) {
 		"bpf_dns_gateway_dns_queries_total 40",
 		"bpf_dns_gateway_suffix_match_total 12",
 		"bpf_dns_gateway_egress_snat_total 11",
+		"bpf_dns_gateway_nat_errors_total 2",
+		"bpf_dns_gateway_nat_revert_failures_total 1",
 		"bpf_dns_gateway_attached_veths 7",
 		"bpf_dns_gateway_bypass_active 1",
 		"bpf_dns_gateway_suffix_rules_loaded 5",

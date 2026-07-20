@@ -170,6 +170,8 @@ Prometheus metrics + `/healthz` on `metricsAddr` (default `:9153`).
 | `bpf_dns_gateway_egress_snat_total` | counter | Responses SNAT'd back to CoreDNS |
 | `bpf_dns_gateway_egress_conntrack_miss_total` | counter | VPC-DNS responses with no/expired conntrack |
 | `bpf_dns_gateway_egress_total_packets` | counter | All packets on TC egress |
+| `bpf_dns_gateway_nat_errors_total` | counter | NAT rewrite failures — packet reverted + passthrough |
+| `bpf_dns_gateway_nat_revert_failures_total` | counter | NAT revert also failed (should stay 0) |
 | `bpf_dns_gateway_attached_veths` | gauge | Interfaces currently attached |
 | `bpf_dns_gateway_bypass_active` | gauge | 1 if bypass on, else 0 |
 | `bpf_dns_gateway_suffix_rules_loaded` | gauge | Rules in the BPF map |
@@ -180,9 +182,9 @@ Prometheus metrics + `/healthz` on `metricsAddr` (default `:9153`).
 
 - **Errors → passthrough.** Parse/validation error paths in eBPF return
   `TC_ACT_OK`, so a malformed or unmatched query degrades to "DNS via CoreDNS".
-  (One known gap: the NAT/checksum helper return values are not checked after
-  conntrack insertion — a helper failure could leave a packet partially
-  rewritten rather than cleanly passed through. See `docs/design.md` §9.1.)
+  NAT helper returns are checked too: a mid-rewrite failure is reverted so the
+  packet leaves either fully rewritten or untouched, never half-rewritten
+  (`nat_errors_total` counts these; see `docs/design.md` §9.1).
 - **Health bypass.** If the VPC resolver fails N consecutive probes the
   controller sets a bypass flag and all DNS goes to CoreDNS until it recovers.
 - **Crash-safe.** TCX programs auto-detach when the controller process exits.

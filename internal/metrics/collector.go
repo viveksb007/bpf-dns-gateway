@@ -79,6 +79,8 @@ var datapathMetrics = []datapathMetric{
 	{bpf.MetricEgressSnat, "egress_snat_total", "Response packets SNAT'd back to CoreDNS."},
 	{bpf.MetricEgressConntrackMiss, "egress_conntrack_miss_total", "VPC-DNS responses with no/expired conntrack entry."},
 	{bpf.MetricEgressTotal, "egress_total_packets", "Total packets seen on TC egress."},
+	{bpf.MetricNatError, "nat_errors_total", "NAT rewrite helper failures; packet reverted and passed through unmodified."},
+	{bpf.MetricNatRevertFail, "nat_revert_failures_total", "NAT failures where the revert also failed (packet possibly inconsistent). Should stay 0."},
 }
 
 // New builds a Collector. Any of attach/health may be nil (their
