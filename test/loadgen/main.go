@@ -41,10 +41,10 @@ func main() {
 // ---- shared wire types ----
 
 type sample struct {
-	Arm       string  `json:"arm"`
+	Arm       string   `json:"arm"`
 	IPs       []string `json:"ips"`
-	LatencyMs float64 `json:"latencyMs"`
-	Err       bool    `json:"err"`
+	LatencyMs float64  `json:"latencyMs"`
+	Err       bool     `json:"err"`
 }
 
 type report struct {

@@ -15,11 +15,11 @@ import (
 
 // Defaults applied when the YAML omits a field.
 const (
-	DefaultMetricsAddr           = ":9153"
-	DefaultHealthCheckInterval   = 5 * time.Second
-	DefaultHealthCheckTimeout    = 2 * time.Second
-	DefaultHealthCheckThreshold  = 3
-	DefaultLogLevel              = "info"
+	DefaultMetricsAddr          = ":9153"
+	DefaultHealthCheckInterval  = 5 * time.Second
+	DefaultHealthCheckTimeout   = 2 * time.Second
+	DefaultHealthCheckThreshold = 3
+	DefaultLogLevel             = "info"
 )
 
 // Rule is a single suffix-match entry.

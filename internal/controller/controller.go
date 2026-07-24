@@ -147,4 +147,3 @@ func (c *Controller) detachAll() error {
 	}
 	return nil
 }
-

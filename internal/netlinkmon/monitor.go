@@ -90,9 +90,9 @@ func (m *Monitor) Start(ctx context.Context) error {
 	// also flip dumpInterrupted so the loop can resync via an explicit
 	// LinkList() afterwards.
 	var (
-		lastFatalErrMu   sync.Mutex
-		lastFatalErr     error
-		dumpInterrupted  atomic.Bool
+		lastFatalErrMu  sync.Mutex
+		lastFatalErr    error
+		dumpInterrupted atomic.Bool
 	)
 	opts := netlink.LinkSubscribeOptions{
 		ListExisting: true,
