@@ -138,14 +138,15 @@ netlink socket (RTNLGRP_LINK)
 │                                                              │
 │ config_map     ARRAY(1)      1 entry                         │
 │ Key:   u32 (always 0)                                        │
-│ Value: {coredns_ip, host_resolver_ip, dns_port, bypass}      │
+│ Value: {coredns_ip, host_resolver_ip, dns_port, bypass,      │
+│         default_action u32}                                  │
 │        (all IPs/ports in network byte order)                 │
 │                                                              │
 │ conntrack_map  LRU_HASH      65536 entries                   │
 │ Key:   {pod_ip u32, pod_port u16, txid u16}                  │
 │ Value: {coredns_ip u32, timestamp_ns u64}                    │
 │                                                              │
-│ metrics_map    PERCPU_ARRAY  9 entries                        │
+│ metrics_map    PERCPU_ARRAY  METRIC__MAX entries             │
 │ Key:   u32 (metric ID)                                       │
 │ Value: u64 (counter)                                         │
 │                                                              │
@@ -202,21 +203,36 @@ dns_gateway_ingress(skb):
 
     lowercase QNAME in scratch buffer (bounded loop, max 256)
 
-    // --- Suffix matching ---
-    for each label boundary (bounded loop, max 20):
+    // --- Suffix matching + action resolution ---
+    action = cfg.default_action            // cluster-resolve | host-resolve
+    for each label boundary (bounded loop, longest suffix first):
         zero scratch.lookup
         copy suffix from that boundary into scratch.lookup
-        if suffix_rules[scratch.lookup] exists → MATCH
+        if suffix_rules[scratch.lookup] exists:
+            action = rule.action           // most-specific match wins:
+            break                          // boundaries are tried longest-first
 
-    no match → TC_ACT_OK (passthrough to CoreDNS)
+    if action != host-resolve → TC_ACT_OK (cluster_resolved; stays on CoreDNS)
 
-    // --- DNAT ---
+    // --- DNAT (action == host-resolve) ---
     store conntrack: {pod_ip, pod_port, txid} → {coredns_ip, timestamp_ns=now}
     rewrite daddr: coredns_ip → host_resolver_ip
     fix IP checksum via bpf_l3_csum_replace
     fix UDP checksum via bpf_l4_csum_replace (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0)
     TC_ACT_OK
 ```
+
+**Action model** (issue #1): every query destined for CoreDNS resolves to an
+action — the most-specific (longest-suffix) matching rule's action, or
+`cfg.default_action` when no rule matches. `host-resolve` → DNAT to the VPC
+resolver; `cluster-resolve` → passthrough to CoreDNS. The default
+`default_action = cluster-resolve` with `host-resolve` rules reproduces the
+original allowlist behavior exactly. Setting `default_action = host-resolve`
+with `cluster-resolve` rules for the cluster suffixes inverts it: everything
+non-cluster goes straight to the VPC resolver. Because the label walk tries
+boundaries longest-first, rule precedence is most-specific-match-wins (e.g. a
+`*.s3.amazonaws.com cluster-resolve` rule overrides a broader
+`*.amazonaws.com host-resolve` rule for S3 names).
 
 **Key design choices:**
 - `bpf_skb_load_bytes` for all reads (not direct packet access) — avoids pointer invalidation when `bpf_skb_store_bytes` is called later
@@ -408,9 +424,18 @@ corednsServiceIP: "10.100.0.10"
 # pod traffic.
 hostResolverIP: "10.0.0.2"
 
-# Suffix rules — any matching suffix triggers redirect; rules are not ordered.
-# Only suffix wildcards (*.domain) are supported in MVP.
-# Interior wildcards (*.s3.*.amazonaws.com) must be expanded to explicit suffixes.
+# Default action for queries that match no rule (optional):
+#   cluster-resolve (default) — passthrough to CoreDNS; rules select what
+#                               gets redirected to the VPC resolver (allowlist).
+#   host-resolve              — redirect to the VPC resolver; rules select
+#                               what stays on CoreDNS (issue #1 "non-cluster"
+#                               mode). Requires >=1 cluster-resolve rule.
+defaultAction: cluster-resolve
+
+# Suffix rules — each rule maps a suffix to an action. Precedence is
+# most-specific-match-wins (longest matching suffix); queries matching no
+# rule get defaultAction. Only suffix wildcards (*.domain) are supported in
+# MVP. Interior wildcards (*.s3.*.amazonaws.com) must be expanded.
 rules:
   - pattern: "*.s3.amazonaws.com"
     action: host-resolve
@@ -422,6 +447,19 @@ rules:
     action: host-resolve
   - pattern: "*.sts.us-east-1.amazonaws.com"
     action: host-resolve
+
+# --- Alternative: "non-cluster" mode (issue #1) ---
+# Everything goes to the VPC resolver except cluster-internal names:
+#
+# defaultAction: host-resolve
+# rules:
+#   - pattern: "*.cluster.local"    # cluster domain (adjust if custom)
+#     action: cluster-resolve
+#   - pattern: "*.in-addr.arpa"     # reverse lookups (pod/service PTR)
+#     action: cluster-resolve
+#   - pattern: "*.ip6.arpa"
+#     action: cluster-resolve
+#   # plus any CoreDNS stub/forward zones (e.g. *.corp.example.com)
 
 # Prometheus metrics
 metricsAddr: ":9153"
@@ -442,6 +480,9 @@ logLevel: info
 - Implemented as suffix match: strip `*.`, encode the remainder to wire format
 - Patterns must use the `*.` prefix in MVP. Exact-only matching is not supported because the suffix hash map cannot distinguish an exact name from a wildcard with the same suffix at any label boundary. Loader rejects patterns without `*.`
 - Interior wildcards NOT supported in the eBPF path — expand at config time
+- Actions: `host-resolve` (DNAT to VPC resolver) or `cluster-resolve` (stay on CoreDNS). Precedence is most-specific-match-wins; ties are impossible (one suffix, one map entry, one action)
+- Validation requires at least one rule whose action differs from `defaultAction` (a config where every rule restates the default is a no-op). In particular `defaultAction: host-resolve` without any `cluster-resolve` rule is rejected — it would send cluster service discovery to the VPC resolver and break the cluster
+- **ndots caveat** (`defaultAction: host-resolve`): pods resolve with search domains and `ndots:5`, so external names are first tried as `<name>.<ns>.svc.cluster.local` etc. Those speculative queries match the `*.cluster.local` rule and still reach CoreDNS (NXDOMAIN churn), exactly as without the gateway; only the final absolute query is redirected. FQDN trailing dots or ndots tuning in the workload avoids the extra hops
 
 ## 9. Edge Cases
 
@@ -485,13 +526,17 @@ logLevel: info
 # eBPF datapath counters (from per-CPU maps, summed)
 bpf_dns_gateway_ingress_total_packets
 bpf_dns_gateway_dns_queries_total
-bpf_dns_gateway_suffix_match_total
-bpf_dns_gateway_suffix_no_match_total
+bpf_dns_gateway_suffix_match_total          # query matched a rule (either action)
+bpf_dns_gateway_suffix_no_match_total       # no rule matched (default action applied)
+bpf_dns_gateway_redirected_total            # DNAT'd to VPC resolver (rule or default)
+bpf_dns_gateway_cluster_resolved_total      # deliberately kept on CoreDNS (rule or default)
 bpf_dns_gateway_bypass_packets_total
 bpf_dns_gateway_parse_errors_total
 bpf_dns_gateway_egress_snat_total
 bpf_dns_gateway_egress_conntrack_miss_total
 bpf_dns_gateway_egress_total_packets
+bpf_dns_gateway_nat_errors_total
+bpf_dns_gateway_nat_revert_failures_total
 
 # Controller metrics
 bpf_dns_gateway_attached_veths          (gauge)
@@ -606,6 +651,17 @@ bpf-dns-gateway/
 - `deploy/config.yaml` — example config
 - AMI build integration (packer or similar)
 - **Milestone**: installable package with tested end-to-end flow
+
+### Phase 5: Default Action ("non-cluster" mode, issue #1)
+- Config: `defaultAction` field + `cluster-resolve` rule action, validation
+- eBPF: `default_action` in `gateway_config`, per-rule action honored,
+  most-specific-match precedence, `redirected` / `cluster_resolved` counters
+- Loader: rules carried with actions; config carries default action
+- Integration tests: host-resolve default (non-match DNAT'd, cluster suffix
+  passthrough, precedence, bypass) — live on EKS
+- Docs: README config/metrics, deploy examples, ndots caveat
+- **Milestone**: `defaultAction: host-resolve` cluster runs all non-cluster
+  DNS via the VPC resolver with cluster names untouched
 
 ## 14. Dependencies
 

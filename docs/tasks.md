@@ -136,6 +136,56 @@ Provide an **alternative** deployment path as a Kubernetes DaemonSet (in additio
 - **Blocked by**: #15, #19
 - **Files**: `deploy/daemonset.yaml`, `deploy/configmap.yaml`, `docs/audit/001-daemonset-deployment.md`
 
+## Phase 5: Default Action — "non-cluster" mode ([issue #1](https://github.com/viveksb007/bpf-dns-gateway/issues/1))
+
+### 22. Config: `defaultAction` + `cluster-resolve` action
+Add top-level `defaultAction: cluster-resolve|host-resolve` (default
+`cluster-resolve` — existing configs unchanged). Accept `cluster-resolve` as
+a rule action. Validation: reject unknown values; require ≥1 rule whose
+action differs from `defaultAction` (all-restating-the-default is a no-op;
+in particular `host-resolve` default without a `cluster-resolve` rule would
+send cluster service discovery to the VPC resolver). Unit tests for
+defaults, both modes, and rejection cases.
+
+- **Blocked by**: —
+- **Files**: `internal/config/config.go`, `internal/config/config_test.go`
+
+### 23. eBPF + loader: action resolution datapath
+`gateway_config` gains `default_action` (replaces `_pad`; size unchanged).
+New `ACTION_CLUSTER_RESOLVE`. Ingress: resolved action = most-specific
+matching rule's action (label walk is longest-suffix-first, so first match
+wins) else `cfg.default_action`; `host-resolve` → DNAT, else passthrough.
+New counters `METRIC_REDIRECTED` / `METRIC_CLUSTER_RESOLVED` (design
+§10.1). Loader: `PopulateConfig` carries the default action;
+`PopulateSuffixRules` carries per-rule actions (reconcile updates changed
+actions in place). Collector exports the new counters. `make generate`;
+verifier budget re-checked on kernel 6.18.
+
+- **Blocked by**: #22
+- **Files**: `bpf/dns_gateway.{c,h}`, `internal/ebpf/maps.go`,
+  `internal/metrics/collector.go`, `cmd/bpf-dns-gateway/main.go`
+
+### 24. 🧪 Integration test: host-resolve default mode
+With `defaultAction: host-resolve` + `*.cluster.local` / `*.in-addr.arpa`
+cluster-resolve rules: non-matching external query → DNAT'd + conntrack;
+cluster suffix query → passthrough untouched, no conntrack; reverse-lookup
+query → passthrough; most-specific precedence (`*.amazonaws.com
+host-resolve` + `*.s3.amazonaws.com cluster-resolve` → S3 name stays on
+CoreDNS); bypass=1 → everything passes through. Existing allowlist-mode
+tests must pass unchanged. Run live on EKS.
+
+- **Blocked by**: #23
+- **Files**: `test/integration/default_action_test.go`
+
+### 25. Docs: README, deploy examples, ndots caveat
+README config reference + metrics table (redirected/cluster_resolved),
+"non-cluster mode" example in `deploy/config.yaml` + `deploy/configmap.yaml`,
+CLAUDE.md key-conventions update (rules now carry actions;
+most-specific-match precedence), ndots:5 search-domain caveat.
+
+- **Blocked by**: #24
+- **Files**: `README.md`, `CLAUDE.md`, `deploy/config.yaml`, `deploy/configmap.yaml`
+
 ## Dependency Graph
 
 ```
