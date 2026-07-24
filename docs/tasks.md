@@ -138,7 +138,7 @@ Provide an **alternative** deployment path as a Kubernetes DaemonSet (in additio
 
 ## Phase 5: Default Action — "non-cluster" mode ([issue #1](https://github.com/viveksb007/bpf-dns-gateway/issues/1))
 
-### 22. Config: `defaultAction` + `cluster-resolve` action
+### 22. ✅ Config: `defaultAction` + `cluster-resolve` action
 Add top-level `defaultAction: cluster-resolve|host-resolve` (default
 `cluster-resolve` — existing configs unchanged). Accept `cluster-resolve` as
 a rule action. Validation: reject unknown values; require ≥1 rule whose

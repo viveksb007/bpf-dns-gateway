@@ -20,6 +20,17 @@ const (
 	DefaultHealthCheckTimeout   = 2 * time.Second
 	DefaultHealthCheckThreshold = 3
 	DefaultLogLevel             = "info"
+	// DefaultDefaultAction preserves pre-defaultAction behavior:
+	// queries matching no rule stay on CoreDNS.
+	DefaultDefaultAction = ActionClusterResolve
+)
+
+// Rule actions and defaultAction values (design.md §8.1).
+const (
+	// ActionHostResolve redirects the query to the VPC resolver (DNAT).
+	ActionHostResolve = "host-resolve"
+	// ActionClusterResolve keeps the query on CoreDNS (passthrough).
+	ActionClusterResolve = "cluster-resolve"
 )
 
 // Rule is a single suffix-match entry.
@@ -39,12 +50,16 @@ type HealthCheck struct {
 
 // Config is the top-level YAML schema.
 type Config struct {
-	CorednsServiceIP string      `yaml:"corednsServiceIP"`
-	HostResolverIP   string      `yaml:"hostResolverIP"`
-	Rules            []Rule      `yaml:"rules"`
-	MetricsAddr      string      `yaml:"metricsAddr"`
-	HealthCheck      HealthCheck `yaml:"healthCheck"`
-	LogLevel         string      `yaml:"logLevel"`
+	CorednsServiceIP string `yaml:"corednsServiceIP"`
+	HostResolverIP   string `yaml:"hostResolverIP"`
+	// DefaultAction is applied to queries matching no rule:
+	// cluster-resolve (default; rules are an allowlist of redirects) or
+	// host-resolve (everything redirects except cluster-resolve rules).
+	DefaultAction string      `yaml:"defaultAction"`
+	Rules         []Rule      `yaml:"rules"`
+	MetricsAddr   string      `yaml:"metricsAddr"`
+	HealthCheck   HealthCheck `yaml:"healthCheck"`
+	LogLevel      string      `yaml:"logLevel"`
 }
 
 // HealthCheckInterval returns the resolved interval (default applied
@@ -102,6 +117,9 @@ func (c *Config) applyDefaults() {
 	if c.LogLevel == "" {
 		c.LogLevel = DefaultLogLevel
 	}
+	if c.DefaultAction == "" {
+		c.DefaultAction = DefaultDefaultAction
+	}
 	// HealthCheck defaults are applied via the accessor helpers
 	// (HealthCheckInterval, etc.) so explicit zero values from YAML
 	// reach Validate and get rejected rather than silently defaulted.
@@ -121,13 +139,30 @@ func (c *Config) Validate() error {
 	if err := validateIPv4(c.HostResolverIP, "hostResolverIP", true); err != nil {
 		return err
 	}
+	if !validAction(c.DefaultAction) {
+		return fmt.Errorf("invalid defaultAction %q (want %s|%s)",
+			c.DefaultAction, ActionClusterResolve, ActionHostResolve)
+	}
 	if len(c.Rules) == 0 {
 		return fmt.Errorf("at least one rule is required")
 	}
+	differing := false
 	for i, r := range c.Rules {
 		if err := validateRule(r); err != nil {
 			return fmt.Errorf("rules[%d]: %w", i, err)
 		}
+		if r.Action != c.DefaultAction {
+			differing = true
+		}
+	}
+	// A config where every rule restates the default action is a no-op.
+	// The dangerous variant: defaultAction=host-resolve with no
+	// cluster-resolve rule would send cluster service discovery
+	// (*.cluster.local, reverse lookups) to the VPC resolver and break
+	// the cluster (design.md §8.1).
+	if !differing {
+		return fmt.Errorf("at least one rule must have an action different from defaultAction %q (otherwise the config is a no-op%s)",
+			c.DefaultAction, hostResolveHint(c.DefaultAction))
 	}
 	if err := validateMetricsAddr(c.MetricsAddr); err != nil {
 		return err
@@ -208,10 +243,24 @@ func validateRule(r Rule) error {
 	if r.Action == "" {
 		return fmt.Errorf("pattern %q action is empty", r.Pattern)
 	}
-	if r.Action != "host-resolve" {
-		return fmt.Errorf("pattern %q has unsupported action %q (only host-resolve in MVP)", r.Pattern, r.Action)
+	if !validAction(r.Action) {
+		return fmt.Errorf("pattern %q has unsupported action %q (want %s|%s)",
+			r.Pattern, r.Action, ActionHostResolve, ActionClusterResolve)
 	}
 	return nil
+}
+
+func validAction(a string) bool {
+	return a == ActionHostResolve || a == ActionClusterResolve
+}
+
+// hostResolveHint appends the cluster-breakage warning for the dangerous
+// no-op variant (host-resolve default with no cluster-resolve rule).
+func hostResolveHint(defaultAction string) string {
+	if defaultAction == ActionHostResolve {
+		return "; without a cluster-resolve rule for *.cluster.local and *.in-addr.arpa, cluster service discovery would be sent to the VPC resolver"
+	}
+	return ""
 }
 
 func validateMetricsAddr(addr string) error {
