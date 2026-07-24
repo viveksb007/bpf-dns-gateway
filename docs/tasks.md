@@ -165,7 +165,7 @@ verifier budget re-checked on kernel 6.18.
 - **Files**: `bpf/dns_gateway.{c,h}`, `internal/ebpf/maps.go`,
   `internal/metrics/collector.go`, `cmd/bpf-dns-gateway/main.go`
 
-### 24. 🧪 Integration test: host-resolve default mode
+### 24. ✅ 🧪 Integration test: host-resolve default mode
 With `defaultAction: host-resolve` + `*.cluster.local` / `*.in-addr.arpa`
 cluster-resolve rules: non-matching external query → DNAT'd + conntrack;
 cluster suffix query → passthrough untouched, no conntrack; reverse-lookup
