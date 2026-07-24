@@ -101,7 +101,7 @@ Codex review uses git diff (working tree vs HEAD), so commit only **after** revi
 - **TCX-only attach** (kernel 6.6+). No classic TC fallback in MVP. Programs auto-detach when controller process exits.
 - **`hostResolverIP` is required** in config. No `/etc/resolv.conf` auto-detect (systemd-resolved nodes expose `127.0.0.53` loopback stub).
 - **Wildcard-only patterns** in MVP (`*.suffix`). Loader rejects exact patterns and interior wildcards.
-- **Rules are unordered.** Any matching suffix triggers redirect. All MVP rules share the `host-resolve` action.
+- **Per-query action resolution.** Every query resolves to `host-resolve` (DNAT to VPC resolver) or `cluster-resolve` (stay on CoreDNS): the most-specific (longest-suffix) matching rule's action, else `defaultAction`. The BPF label walk tries boundaries longest-first, so the first match IS the most-specific — no explicit ordering. `defaultAction: host-resolve` + cluster-resolve rules = "non-cluster" mode (issue #1). Config validation requires ≥1 rule whose action differs from the default.
 - **`QDCOUNT != 1` → passthrough** with `parse_error` metric.
 - **VPC CNI network policy coexistence is post-MVP** (see `docs/vpc-cni-coexistence.md`). MVP assumes our programs are sole TC filter on host-side veth.
 - **Inclusive language**: use primary/replica, allowlist/denylist (per Amazon convention).

@@ -107,6 +107,7 @@ Edit [`deploy/config.yaml`](deploy/config.yaml):
 ```yaml
 corednsServiceIP: "10.100.0.10"      # kube-dns ClusterIP
 hostResolverIP:   "169.254.169.253"  # REQUIRED — VPC resolver (base+2 or link-local)
+defaultAction: cluster-resolve       # action when no rule matches (see below)
 rules:
   - { pattern: "*.s3.amazonaws.com",            action: host-resolve }
   - { pattern: "*.dkr.ecr.us-west-2.amazonaws.com", action: host-resolve }
@@ -118,10 +119,32 @@ logLevel: info
 - `hostResolverIP` is **required** — no `/etc/resolv.conf` auto-detect
   (systemd-resolved nodes expose the `127.0.0.53` loopback stub, which can't
   serve DNAT'd traffic).
+- Every query resolves to an **action**: the most-specific (longest-suffix)
+  matching rule's action, else `defaultAction`. `host-resolve` → DNAT to the
+  VPC resolver; `cluster-resolve` → stay on CoreDNS.
 - Patterns are **leading-wildcard suffixes only** (`*.suffix`). Exact and
   interior wildcards are rejected. Matching is case-sensitive (resolvers emit
   lowercase; mixed-case falls through to CoreDNS).
-- Rules are unordered; any match redirects.
+- Validation requires at least one rule whose action differs from
+  `defaultAction` (otherwise the config is a no-op).
+
+**Non-cluster mode** ([issue #1](https://github.com/viveksb007/bpf-dns-gateway/issues/1)):
+send *all* DNS to the VPC resolver except cluster-internal names:
+
+```yaml
+defaultAction: host-resolve
+rules:
+  - { pattern: "*.cluster.local", action: cluster-resolve }  # cluster domain
+  - { pattern: "*.in-addr.arpa",  action: cluster-resolve }  # reverse lookups
+  - { pattern: "*.ip6.arpa",      action: cluster-resolve }
+  # plus any CoreDNS stub/forward zones, e.g. *.corp.example.com
+```
+
+ndots caveat: pods resolve with search domains (`ndots:5`), so external names
+are first tried as `<name>.<ns>.svc.cluster.local` etc. — those speculative
+queries match `*.cluster.local` and still reach CoreDNS (NXDOMAIN churn, same
+as without the gateway); only the final absolute query is redirected. Use
+FQDNs (trailing dot) or tune `ndots` in workloads to skip the extra hops.
 
 ## Deploy
 
@@ -163,8 +186,10 @@ Prometheus metrics + `/healthz` on `metricsAddr` (default `:9153`).
 |--------|------|---------|
 | `bpf_dns_gateway_ingress_total_packets` | counter | All packets on TC ingress |
 | `bpf_dns_gateway_dns_queries_total` | counter | DNS queries to CoreDNS seen |
-| `bpf_dns_gateway_suffix_match_total` | counter | Queries matched a rule → DNAT'd |
-| `bpf_dns_gateway_suffix_no_match_total` | counter | Queries with no match → passthrough |
+| `bpf_dns_gateway_suffix_match_total` | counter | Queries that matched a rule (either action) |
+| `bpf_dns_gateway_suffix_no_match_total` | counter | Queries matching no rule (default action applied) |
+| `bpf_dns_gateway_redirected_total` | counter | Queries DNAT'd to the VPC resolver (rule or default) |
+| `bpf_dns_gateway_cluster_resolved_total` | counter | Queries deliberately kept on CoreDNS (rule or default) |
 | `bpf_dns_gateway_bypass_packets_total` | counter | Packets passed through due to bypass |
 | `bpf_dns_gateway_parse_errors_total` | counter | DNS parse failures / QDCOUNT≠1 / compression ptr |
 | `bpf_dns_gateway_egress_snat_total` | counter | Responses SNAT'd back to CoreDNS |

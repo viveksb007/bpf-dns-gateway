@@ -18,10 +18,21 @@ corednsServiceIP: "10.100.0.10"
 # which cannot serve DNAT'd pod traffic.
 hostResolverIP: "169.254.169.253"
 
-# Suffix rules. Any matching suffix triggers a redirect; rules are not
-# ordered. MVP supports leading-wildcard suffixes only (`*.suffix`) with
-# the single action `host-resolve`. Interior wildcards and exact matches
-# are rejected at load time.
+# Default action for queries matching no rule (optional):
+#   cluster-resolve (default) — stay on CoreDNS; rules pick what gets
+#                               redirected to the VPC resolver (allowlist).
+#   host-resolve              — redirect to the VPC resolver; rules pick
+#                               what stays on CoreDNS ("non-cluster" mode,
+#                               see the example at the bottom). Requires
+#                               at least one cluster-resolve rule.
+defaultAction: cluster-resolve
+
+# Suffix rules. Each rule maps a suffix to an action (host-resolve =
+# redirect to the VPC resolver, cluster-resolve = stay on CoreDNS).
+# Precedence is most-specific-match-wins (longest matching suffix);
+# queries matching no rule get defaultAction. MVP supports
+# leading-wildcard suffixes only (`*.suffix`). Interior wildcards and
+# exact matches are rejected at load time.
 #
 # Note: matching is case-sensitive in the datapath (MVP). Resolvers emit
 # lowercase QNAMEs in practice; mixed-case queries fall through to
@@ -37,6 +48,26 @@ rules:
   # STS (IRSA / AssumeRole).
   - { pattern: "*.sts.us-east-1.amazonaws.com", action: host-resolve }
   - { pattern: "*.sts.us-west-2.amazonaws.com", action: host-resolve }
+
+# --- Alternative: "non-cluster" mode ---
+# Send ALL DNS to the VPC resolver except cluster-internal names.
+# Validation rejects defaultAction: host-resolve without at least one
+# cluster-resolve rule (it would break cluster service discovery).
+#
+# defaultAction: host-resolve
+# rules:
+#   - { pattern: "*.cluster.local", action: cluster-resolve }  # cluster domain
+#   - { pattern: "*.in-addr.arpa",  action: cluster-resolve }  # reverse lookups
+#   - { pattern: "*.ip6.arpa",      action: cluster-resolve }
+#   # Add any zones your CoreDNS forwards specially (stub domains), e.g.:
+#   # - { pattern: "*.corp.example.com", action: cluster-resolve }
+#
+# ndots caveat: pods resolve with search domains (ndots:5), so external
+# names are first tried as <name>.<ns>.svc.cluster.local etc. Those
+# speculative queries match *.cluster.local and still reach CoreDNS
+# (NXDOMAIN churn), same as without the gateway; only the final absolute
+# query is redirected. Use FQDNs (trailing dot) or tune ndots to avoid
+# the extra hops.
 
 # Prometheus metrics + health endpoints listen here (/metrics, /healthz).
 metricsAddr: ":9153"

@@ -19,6 +19,10 @@ data:
   config.yaml: |
     corednsServiceIP: "10.100.0.10"
     hostResolverIP: "169.254.169.253"
+    # cluster-resolve (default): rules below are an allowlist of redirects.
+    # host-resolve: everything redirects EXCEPT cluster-resolve rules —
+    # see the non-cluster example in deploy/config.yaml.
+    defaultAction: cluster-resolve
     rules:
       - { pattern: "*.s3.amazonaws.com",            action: host-resolve }
       - { pattern: "*.s3.us-west-2.amazonaws.com",  action: host-resolve }

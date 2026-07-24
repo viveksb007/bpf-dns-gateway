@@ -177,7 +177,7 @@ tests must pass unchanged. Run live on EKS.
 - **Blocked by**: #23
 - **Files**: `test/integration/default_action_test.go`
 
-### 25. Docs: README, deploy examples, ndots caveat
+### 25. ✅ Docs: README, deploy examples, ndots caveat
 README config reference + metrics table (redirected/cluster_resolved),
 "non-cluster mode" example in `deploy/config.yaml` + `deploy/configmap.yaml`,
 CLAUDE.md key-conventions update (rules now carry actions;
