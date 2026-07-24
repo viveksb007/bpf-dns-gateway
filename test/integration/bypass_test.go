@@ -49,7 +49,7 @@ func waitBypass(t *testing.T, l *bpf.Loader, want bool, timeout time.Duration) b
 // redirect_test.go by also asserting no conntrack entry is created.
 func TestBypassStopsIngressDNAT(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	if err := l.SetBypass(true); err != nil {
@@ -70,7 +70,7 @@ func TestBypassStopsIngressDNAT(t *testing.T) {
 // never sees src=host_resolver_ip. Egress ignores cfg->bypass.
 func TestEgressSNATsInFlightUnderBypass(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestHealthCheckerRecoversBypass(t *testing.T) {
 // SNAT'd and its entry deleted.
 func TestConntrackFreshWithinTTL(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	q := buildDNSQuery(t, "mybucket.s3.amazonaws.com")
@@ -191,7 +191,7 @@ func TestConntrackFreshWithinTTL(t *testing.T) {
 // entry deleted.
 func TestConntrackStaleBeyondTTL(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	q := buildDNSQuery(t, "mybucket.s3.amazonaws.com")

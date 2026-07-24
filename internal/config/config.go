@@ -188,15 +188,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Patterns returns the suffix patterns from c.Rules in input order.
-func (c *Config) Patterns() []string {
-	out := make([]string, len(c.Rules))
-	for i, r := range c.Rules {
-		out[i] = r.Pattern
-	}
-	return out
-}
-
 func validateIPv4(s, field string, rejectLoopback bool) error {
 	ip := net.ParseIP(s)
 	if ip == nil {

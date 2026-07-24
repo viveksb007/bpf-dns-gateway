@@ -19,7 +19,7 @@ import (
 // success counters advance.
 func TestNATRewrite_NoErrorsOnRoundTrip(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 

@@ -33,7 +33,7 @@ type DnsGatewayGatewayConfig struct {
 	HostResolverIp uint32
 	DnsPort        uint16
 	Bypass         uint16
-	Pad            uint32
+	DefaultAction  uint32
 }
 
 type DnsGatewayScratchBuf struct {

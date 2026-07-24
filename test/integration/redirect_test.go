@@ -225,7 +225,7 @@ func runEgress(t *testing.T, l *bpf.Loader, pkt []byte) (ret uint32, out []byte)
 
 func TestDNATMatchingSuffix(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 
@@ -253,7 +253,7 @@ func TestDNATMatchingSuffix(t *testing.T) {
 
 func TestPassthroughNoMatch(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestPassthroughNoMatch(t *testing.T) {
 
 func TestPassthroughBypass(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	if err := l.SetBypass(true); err != nil {
@@ -288,7 +288,7 @@ func TestPassthroughBypass(t *testing.T) {
 
 func TestSNATResponse(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestSNATResponse(t *testing.T) {
 
 func TestSNATBypassesUnknownTxid(t *testing.T) {
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	// Send response with no prior ingress -> no conntrack -> passthrough.

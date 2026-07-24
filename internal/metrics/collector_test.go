@@ -75,6 +75,8 @@ func TestCollector_AllMetricsPresent(t *testing.T) {
 	dp.snap[bpf.MetricEgressSnat] = 11
 	dp.snap[bpf.MetricNatError] = 2
 	dp.snap[bpf.MetricNatRevertFail] = 1
+	dp.snap[bpf.MetricRedirected] = 13
+	dp.snap[bpf.MetricClusterResolved] = 27
 	at := &fakeAttach{n: 7}
 	he := &fakeHealth{failures: 3, bypass: true}
 
@@ -88,6 +90,8 @@ func TestCollector_AllMetricsPresent(t *testing.T) {
 		"bpf_dns_gateway_egress_snat_total 11",
 		"bpf_dns_gateway_nat_errors_total 2",
 		"bpf_dns_gateway_nat_revert_failures_total 1",
+		"bpf_dns_gateway_redirected_total 13",
+		"bpf_dns_gateway_cluster_resolved_total 27",
 		"bpf_dns_gateway_attached_veths 7",
 		"bpf_dns_gateway_bypass_active 1",
 		"bpf_dns_gateway_suffix_rules_loaded 5",

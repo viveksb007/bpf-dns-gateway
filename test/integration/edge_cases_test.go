@@ -90,7 +90,7 @@ func metricDelta(t *testing.T, l *bpf.Loader, id bpf.MetricID, fn func()) uint64
 func edgeLoader(t *testing.T) *bpf.Loader {
 	t.Helper()
 	l := loadGateway(t)
-	if err := l.PopulateSuffixRules([]string{"*.s3.amazonaws.com"}); err != nil {
+	if err := l.PopulateSuffixRules([]bpf.SuffixRule{{Pattern: "*.s3.amazonaws.com", Action: bpf.ActionHostResolve}}); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
 	}
 	return l

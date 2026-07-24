@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+
+	"github.com/viveksb007/bpf-dns-gateway/internal/dnsenc"
 )
 
 // requireRootBPF loads a Loader pointed at a temp pin dir on bpffs.
@@ -104,9 +106,9 @@ func TestSetBypass(t *testing.T) {
 func TestPopulateSuffixRules_AddDelete(t *testing.T) {
 	l := requireRootBPF(t)
 
-	patterns := []string{
-		"*.s3.amazonaws.com",
-		"*.s3.us-west-2.amazonaws.com",
+	patterns := []SuffixRule{
+		{Pattern: "*.s3.amazonaws.com", Action: ActionHostResolve},
+		{Pattern: "*.s3.us-west-2.amazonaws.com", Action: ActionHostResolve},
 	}
 	if err := l.PopulateSuffixRules(patterns); err != nil {
 		t.Fatalf("PopulateSuffixRules: %v", err)
@@ -115,16 +117,29 @@ func TestPopulateSuffixRules_AddDelete(t *testing.T) {
 		t.Fatalf("count after add: n=%d err=%v", n, err)
 	}
 
-	// Reconcile to a different set: drop one, add one.
-	patterns2 := []string{
-		"*.s3.amazonaws.com",
-		"*.dkr.ecr.us-west-2.amazonaws.com",
+	// Reconcile to a different set: drop one, add one, and flip the
+	// retained rule's action (update-in-place path).
+	patterns2 := []SuffixRule{
+		{Pattern: "*.s3.amazonaws.com", Action: ActionClusterResolve},
+		{Pattern: "*.dkr.ecr.us-west-2.amazonaws.com", Action: ActionHostResolve},
 	}
 	if err := l.PopulateSuffixRules(patterns2); err != nil {
 		t.Fatalf("PopulateSuffixRules reconcile: %v", err)
 	}
 	if n, err := l.CountSuffixRules(); err != nil || n != 2 {
 		t.Fatalf("count after reconcile: n=%d err=%v", n, err)
+	}
+	// The retained rule's action must have been updated in place.
+	key, err := dnsenc.EncodeSuffix("s3.amazonaws.com")
+	if err != nil {
+		t.Fatalf("EncodeSuffix: %v", err)
+	}
+	var val DnsGatewaySuffixValue
+	if err := l.objs.SuffixRules.Lookup(DnsGatewaySuffixKey{Name: key}, &val); err != nil {
+		t.Fatalf("lookup retained rule: %v", err)
+	}
+	if Action(val.Action) != ActionClusterResolve {
+		t.Errorf("retained rule action = %d, want %d (cluster-resolve)", val.Action, ActionClusterResolve)
 	}
 	// Empty reconcile clears the map.
 	if err := l.PopulateSuffixRules(nil); err != nil {
@@ -137,7 +152,7 @@ func TestPopulateSuffixRules_AddDelete(t *testing.T) {
 
 func TestPopulateSuffixRules_RejectsNonWildcard(t *testing.T) {
 	l := requireRootBPF(t)
-	err := l.PopulateSuffixRules([]string{"s3.amazonaws.com"})
+	err := l.PopulateSuffixRules([]SuffixRule{{Pattern: "s3.amazonaws.com", Action: ActionHostResolve}})
 	if err == nil {
 		t.Fatalf("expected error rejecting non-wildcard pattern")
 	}
@@ -151,7 +166,7 @@ func TestPopulateSuffixRules_RejectsInteriorWildcard(t *testing.T) {
 		"*.foo*bar.amazonaws.com",
 	}
 	for _, p := range cases {
-		if err := l.PopulateSuffixRules([]string{p}); err == nil {
+		if err := l.PopulateSuffixRules([]SuffixRule{{Pattern: p, Action: ActionHostResolve}}); err == nil {
 			t.Errorf("expected error for interior wildcard %q", p)
 		}
 	}

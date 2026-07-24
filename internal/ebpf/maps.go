@@ -12,8 +12,15 @@ import (
 	"github.com/viveksb007/bpf-dns-gateway/internal/dnsenc"
 )
 
-// actionHostResolve mirrors ACTION_HOST_RESOLVE in bpf/dns_gateway.h.
-const actionHostResolve uint32 = 1
+// Action mirrors the ACTION_* constants in bpf/dns_gateway.h.
+type Action uint32
+
+const (
+	// ActionHostResolve redirects matching queries to the VPC resolver.
+	ActionHostResolve Action = 1
+	// ActionClusterResolve keeps matching queries on CoreDNS.
+	ActionClusterResolve Action = 2
+)
 
 // The eBPF C compares config_map fields against packet fields like
 // iph.daddr and udp.dest, which the kernel exposes in network byte order
@@ -29,11 +36,14 @@ var dnsPort53 = nativeUint16([]byte{0x00, 0x35})
 // Config carries the values written to the single-entry config_map.
 //
 // CorednsIP and HostResolverIP must be IPv4. Bypass=true sets the bypass
-// flag; the eBPF programs check it on every packet.
+// flag; the eBPF programs check it on every packet. DefaultAction is the
+// action for queries matching no suffix rule; the zero value is treated
+// as ActionClusterResolve (the pre-defaultAction behavior).
 type Config struct {
 	CorednsIP      net.IP
 	HostResolverIP net.IP
 	Bypass         bool
+	DefaultAction  Action
 }
 
 // PopulateConfig writes the full config entry to config_map[0]. It is safe
@@ -53,12 +63,20 @@ func (l *Loader) PopulateConfig(cfg Config) error {
 	if cfg.Bypass {
 		bypass = 1
 	}
+	defaultAction := cfg.DefaultAction
+	if defaultAction == 0 {
+		defaultAction = ActionClusterResolve
+	}
+	if defaultAction != ActionHostResolve && defaultAction != ActionClusterResolve {
+		return fmt.Errorf("invalid DefaultAction %d", defaultAction)
+	}
 
 	val := DnsGatewayGatewayConfig{
 		CorednsIp:      nativeUint32IP(c4),
 		HostResolverIp: nativeUint32IP(h4),
 		DnsPort:        dnsPort53,
 		Bypass:         bypass,
+		DefaultAction:  uint32(defaultAction),
 	}
 	var key uint32 = 0
 	l.configMu.Lock()
@@ -93,40 +111,54 @@ func (l *Loader) SetBypass(on bool) error {
 	return nil
 }
 
-// PopulateSuffixRules reconciles suffix_rules with the given patterns.
+// SuffixRule pairs a wildcard pattern with its action for the BPF map.
+type SuffixRule struct {
+	Pattern string
+	Action  Action
+}
+
+// PopulateSuffixRules reconciles suffix_rules with the given rules.
 //
 // Each pattern must be of the form "*.suffix" (wildcard-only in MVP).
 // Exact patterns and interior wildcards are rejected. The map is fully
-// reconciled: keys present in the map but not in patterns are deleted;
-// keys missing are added; keys present in both are left alone.
-func (l *Loader) PopulateSuffixRules(patterns []string) error {
-	desired := make(map[DnsGatewaySuffixKey]struct{}, len(patterns))
-	for _, p := range patterns {
-		suffix, isWildcard := dnsenc.ParsePattern(p)
+// reconciled: keys present in the map but not in rules are deleted;
+// keys missing are added; keys whose action changed are updated in
+// place.
+func (l *Loader) PopulateSuffixRules(rules []SuffixRule) error {
+	desired := make(map[DnsGatewaySuffixKey]Action, len(rules))
+	for _, r := range rules {
+		if r.Action != ActionHostResolve && r.Action != ActionClusterResolve {
+			return fmt.Errorf("pattern %q has invalid action %d", r.Pattern, r.Action)
+		}
+		suffix, isWildcard := dnsenc.ParsePattern(r.Pattern)
 		if !isWildcard {
-			return fmt.Errorf("pattern %q must use *.suffix form (exact match unsupported in MVP)", p)
+			return fmt.Errorf("pattern %q must use *.suffix form (exact match unsupported in MVP)", r.Pattern)
 		}
 		// Reject interior wildcards (e.g. "*.*.amazonaws.com" or
 		// "*.s3.*.amazonaws.com"). The BPF matcher does byte-for-byte
 		// suffix comparison and would otherwise install a literal '*'
 		// byte that never matches a real DNS query.
 		if strings.Contains(suffix, "*") {
-			return fmt.Errorf("pattern %q has interior wildcard; only leading *.suffix is supported", p)
+			return fmt.Errorf("pattern %q has interior wildcard; only leading *.suffix is supported", r.Pattern)
 		}
 		key, err := dnsenc.EncodeSuffix(suffix)
 		if err != nil {
-			return fmt.Errorf("encode pattern %q: %w", p, err)
+			return fmt.Errorf("encode pattern %q: %w", r.Pattern, err)
 		}
-		desired[DnsGatewaySuffixKey{Name: key}] = struct{}{}
+		mapKey := DnsGatewaySuffixKey{Name: key}
+		if prev, dup := desired[mapKey]; dup && prev != r.Action {
+			return fmt.Errorf("pattern %q appears with conflicting actions", r.Pattern)
+		}
+		desired[mapKey] = r.Action
 	}
 
-	// Snapshot existing keys so we can compute the diff.
-	existing := make(map[DnsGatewaySuffixKey]struct{})
+	// Snapshot existing keys + actions so we can compute the diff.
+	existing := make(map[DnsGatewaySuffixKey]Action)
 	iter := l.objs.SuffixRules.Iterate()
 	var k DnsGatewaySuffixKey
 	var v DnsGatewaySuffixValue
 	for iter.Next(&k, &v) {
-		existing[k] = struct{}{}
+		existing[k] = Action(v.Action)
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("iterate suffix_rules: %w", err)
@@ -144,12 +176,12 @@ func (l *Loader) PopulateSuffixRules(patterns []string) error {
 			return fmt.Errorf("delete stale suffix rule: %w", err)
 		}
 	}
-	// Add new keys.
-	val := DnsGatewaySuffixValue{Action: actionHostResolve}
-	for key := range desired {
-		if _, ok := existing[key]; ok {
+	// Add new keys and update keys whose action changed.
+	for key, action := range desired {
+		if prev, ok := existing[key]; ok && prev == action {
 			continue
 		}
+		val := DnsGatewaySuffixValue{Action: uint32(action)}
 		if err := l.objs.SuffixRules.Update(key, val, ebpf.UpdateAny); err != nil {
 			return fmt.Errorf("add suffix rule: %w", err)
 		}
@@ -192,6 +224,12 @@ const (
 	// MetricNatRevertFail counts NAT failures where the revert itself
 	// also failed (packet possibly inconsistent). Should stay 0.
 	MetricNatRevertFail
+	// MetricRedirected counts queries whose resolved action was
+	// host-resolve and whose DNAT fully succeeded (rule or default).
+	MetricRedirected
+	// MetricClusterResolved counts queries deliberately kept on
+	// CoreDNS by a cluster-resolve action (rule or default).
+	MetricClusterResolved
 	metricMax
 )
 

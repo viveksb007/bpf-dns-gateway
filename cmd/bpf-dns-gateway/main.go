@@ -75,11 +75,16 @@ func run(configPath, pinDir string) error {
 	if err := loader.PopulateConfig(bpf.Config{
 		CorednsIP:      net.ParseIP(cfg.CorednsServiceIP),
 		HostResolverIP: net.ParseIP(cfg.HostResolverIP),
+		DefaultAction:  toBPFAction(cfg.DefaultAction),
 	}); err != nil {
 		cleanupLoader()
 		return fmt.Errorf("populate config: %w", err)
 	}
-	if err := loader.PopulateSuffixRules(cfg.Patterns()); err != nil {
+	rules := make([]bpf.SuffixRule, len(cfg.Rules))
+	for i, r := range cfg.Rules {
+		rules[i] = bpf.SuffixRule{Pattern: r.Pattern, Action: toBPFAction(r.Action)}
+	}
+	if err := loader.PopulateSuffixRules(rules); err != nil {
 		cleanupLoader()
 		return fmt.Errorf("populate suffix rules: %w", err)
 	}
@@ -198,6 +203,17 @@ func run(configPath, pinDir string) error {
 
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// toBPFAction translates a validated config action string to the eBPF
+// action constant. Config validation guarantees only the two known
+// values reach here; anything else maps to cluster-resolve, the safe
+// passthrough action.
+func toBPFAction(a string) bpf.Action {
+	if a == config.ActionHostResolve {
+		return bpf.ActionHostResolve
+	}
+	return bpf.ActionClusterResolve
 }
 
 func newLogger(level string) *slog.Logger {

@@ -254,7 +254,16 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 	 * unrolled loop interaction with the suffix matching loop. See
 	 * docs/design.md §9.1. */
 
-	/* Suffix matching: try each label boundary */
+	/* Suffix matching + action resolution (design.md §6.2): the
+	 * resolved action starts as the configured default and is replaced
+	 * by the first matching rule's action. label_offsets[] is ordered
+	 * longest-suffix-first (offset 0 = the full name), so the first
+	 * match IS the most-specific match — precedence for free.
+	 * default_action == 0 (stale pinned map from an older binary)
+	 * falls through to the else branch → cluster-resolve, preserving
+	 * the original allowlist behavior. */
+	__u32 action = cfg->default_action;
+	__u32 matched = 0;
 	for (int i = 0; i < MAX_LABELS; i++) {
 		if ((__u32)i >= num_labels)
 			break;
@@ -301,16 +310,24 @@ int dns_gateway_ingress(struct __sk_buff *skb)
 		/* Hash map lookup */
 		struct suffix_key *key = (struct suffix_key *)scratch->lookup;
 		struct suffix_value *val = bpf_map_lookup_elem(&suffix_rules, key);
-		if (val && val->action == ACTION_HOST_RESOLVE)
-			goto do_dnat;
+		if (val) {
+			action = val->action;
+			matched = 1;
+			break; /* longest-first walk: first match is most specific */
+		}
 	}
 
-	/* No match — passthrough to CoreDNS */
-	increment_metric(METRIC_SUFFIX_NO_MATCH);
-	return TC_ACT_OK;
+	if (matched)
+		increment_metric(METRIC_SUFFIX_MATCH);
+	else
+		increment_metric(METRIC_SUFFIX_NO_MATCH);
 
-do_dnat:
-	increment_metric(METRIC_SUFFIX_MATCH);
+	if (action != ACTION_HOST_RESOLVE) {
+		/* cluster-resolve (by rule, default, or stale 0 default) —
+		 * stays on CoreDNS untouched. */
+		increment_metric(METRIC_CLUSTER_RESOLVED);
+		return TC_ACT_OK;
+	}
 
 	/* Create conntrack entry */
 	struct conntrack_key ct_key = {};
@@ -342,6 +359,10 @@ do_dnat:
 		return TC_ACT_OK;
 	}
 
+	/* Counted only after the rewrite fully succeeded, so
+	 * redirected_total means "actually left for the VPC resolver"
+	 * (conntrack/NAT failures above fall back to CoreDNS). */
+	increment_metric(METRIC_REDIRECTED);
 	return TC_ACT_OK;
 }
 

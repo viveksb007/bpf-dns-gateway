@@ -26,12 +26,19 @@
  */
 #define CONNTRACK_TTL_NS (5ULL * 1000ULL * 1000ULL * 1000ULL)
 
-#define ACTION_HOST_RESOLVE 1
+/* Rule / default actions (design.md §6.2). A query's resolved action is
+ * the most-specific matching rule's action, else gateway_config
+ * .default_action. HOST_RESOLVE → DNAT to the VPC resolver;
+ * CLUSTER_RESOLVE → passthrough to CoreDNS. */
+#define ACTION_HOST_RESOLVE    1
+#define ACTION_CLUSTER_RESOLVE 2
 
 enum metric_id {
 	METRIC_TOTAL_PACKETS = 0,
 	METRIC_DNS_QUERIES,
+	/* Query matched a suffix rule (either action). */
 	METRIC_SUFFIX_MATCH,
+	/* No rule matched; default_action applied. */
 	METRIC_SUFFIX_NO_MATCH,
 	METRIC_BYPASS_ACTIVE,
 	METRIC_PARSE_ERROR,
@@ -46,6 +53,11 @@ enum metric_id {
 	 * (rewritten address vs stale checksum) and will likely be dropped
 	 * downstream. Should never fire; alarm-worthy if it does. */
 	METRIC_NAT_REVERT_FAIL,
+	/* Resolved action was host-resolve → DNAT'd (rule or default). */
+	METRIC_REDIRECTED,
+	/* Resolved action was cluster-resolve → deliberately kept on
+	 * CoreDNS (rule or default). */
+	METRIC_CLUSTER_RESOLVED,
 	METRIC__MAX,
 };
 
@@ -63,7 +75,12 @@ struct gateway_config {
 	__u32 host_resolver_ip;
 	__u16 dns_port;
 	__u16 bypass;
-	__u32 _pad;
+	/* Action for queries matching no suffix rule (ACTION_*). Replaces
+	 * the former _pad field — struct size unchanged. 0 (e.g. a stale
+	 * pinned map from a pre-defaultAction binary) is treated as
+	 * ACTION_CLUSTER_RESOLVE by the ingress program, preserving the
+	 * original allowlist behavior. */
+	__u32 default_action;
 };
 
 struct conntrack_key {

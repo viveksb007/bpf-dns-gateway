@@ -37,10 +37,9 @@ func TestParseValid(t *testing.T) {
 		t.Errorf("rules len = %d, want 2", len(c.Rules))
 	}
 	want := []string{"*.s3.amazonaws.com", "*.dkr.ecr.us-west-2.amazonaws.com"}
-	got := c.Patterns()
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("Patterns()[%d] = %q, want %q", i, got[i], want[i])
+		if c.Rules[i].Pattern != want[i] {
+			t.Errorf("Rules[%d].Pattern = %q, want %q", i, c.Rules[i].Pattern, want[i])
 		}
 	}
 	if c.HealthCheckInterval() != 5*time.Second {

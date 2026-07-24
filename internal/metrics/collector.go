@@ -72,8 +72,10 @@ type datapathMetric struct {
 var datapathMetrics = []datapathMetric{
 	{bpf.MetricTotalPackets, "ingress_total_packets", "Total packets seen on TC ingress."},
 	{bpf.MetricDNSQueries, "dns_queries_total", "DNS queries to CoreDNS observed on ingress."},
-	{bpf.MetricSuffixMatch, "suffix_match_total", "DNS queries that matched a suffix rule and were DNAT'd."},
-	{bpf.MetricSuffixNoMatch, "suffix_no_match_total", "DNS queries to CoreDNS with no suffix match (passthrough)."},
+	{bpf.MetricSuffixMatch, "suffix_match_total", "DNS queries that matched a suffix rule (either action)."},
+	{bpf.MetricSuffixNoMatch, "suffix_no_match_total", "DNS queries matching no rule (default action applied)."},
+	{bpf.MetricRedirected, "redirected_total", "DNS queries DNAT'd to the VPC resolver (rule or default action)."},
+	{bpf.MetricClusterResolved, "cluster_resolved_total", "DNS queries deliberately kept on CoreDNS (rule or default action)."},
 	{bpf.MetricBypassActive, "bypass_packets_total", "Packets passed through because the bypass flag was set."},
 	{bpf.MetricParseError, "parse_errors_total", "DNS parse failures (compression ptr, QDCOUNT!=1, malformed)."},
 	{bpf.MetricEgressSnat, "egress_snat_total", "Response packets SNAT'd back to CoreDNS."},

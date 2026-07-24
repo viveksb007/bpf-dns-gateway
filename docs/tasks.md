@@ -150,7 +150,7 @@ defaults, both modes, and rejection cases.
 - **Blocked by**: —
 - **Files**: `internal/config/config.go`, `internal/config/config_test.go`
 
-### 23. eBPF + loader: action resolution datapath
+### 23. ✅ eBPF + loader: action resolution datapath
 `gateway_config` gains `default_action` (replaces `_pad`; size unchanged).
 New `ACTION_CLUSTER_RESOLVE`. Ingress: resolved action = most-specific
 matching rule's action (label walk is longest-suffix-first, so first match
